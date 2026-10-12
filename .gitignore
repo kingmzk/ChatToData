@@ -1,0 +1,31 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Isolated browser test data, exports, logs and local audit key
+browser-demo/
+talk2data/api/static/browser-report/
+
+.venv-evals/
+eval-results/
+.deepeval/
+
+docs/architecture/qa/
+
+talk2data/api/static/architecture-guide/
+
+# Frontend builds
+frontend/node_modules/
+frontend/dist/
+
+# Local database files, logs, and scratch
+*.db
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.log
+scratch/
+*.tex

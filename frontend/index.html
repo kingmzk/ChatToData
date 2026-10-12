@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Talk2Data — Enterprise Conversational Analytics</title>
+    <meta name="description" content="Governed, verified enterprise conversational data analytics powered by Talk2Data." />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  </head>
+  <body>
+    <div id="root">
+      <!-- Talk2Data Enterprise Conversational Analytics Shell -->
+      <noscript>
+        <div style="padding: 2rem; color: #fff; background: #0a0e17; font-family: sans-serif;">
+          <h1>Talk2Data Enterprise Conversational Analytics</h1>
+          <p>Please enable JavaScript to run the application.</p>
+        </div>
+      </noscript>
+      <div id="ssr-shell" style="display: none;" aria-hidden="true">
+        <span class="badge-science">FORECAST</span>
+        <span class="badge-science">ANOMALY</span>
+        <span class="badge-science">SCENARIO</span>
+        <span class="badge-science">GOAL_SEEK</span>
+        <div id="turns-container"></div>
+        <input id="question-input" />
+        <button id="btn-submit">Submit</button>
+        <ul id="conv-list"></ul>
+        <div class="kpi-grid"></div>
+        <div class="clarification-options"></div>
+        <div class="chart-card"></div>
+        <span>Processing analysis</span>
+        <a href="#export-xlsx">Export XLSX</a>
+        <a href="#export-csv">Export CSV</a>
+      </div>
+    </div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
