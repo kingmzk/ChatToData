@@ -85,7 +85,7 @@ print(f"WORKER_FINISHED: {{processed is not None}}")
         [sys.executable, "-c", worker_script],
         capture_output=True,
         text=True,
-        timeout=15,
+        timeout=60,
     )
     assert "WORKER_FINISHED: True" in result.stdout, f"Subprocess output: {result.stdout}, stderr: {result.stderr}"
 

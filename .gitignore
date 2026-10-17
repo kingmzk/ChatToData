@@ -1,21 +1,30 @@
 .env
 __pycache__/
 *.pyc
+*.pyo
 .pytest_cache/
 .coverage
 htmlcov/
 
+# Virtual environments
+.venv/
+.venv-evals/
+env/
+venv/
+
 # Isolated browser test data, exports, logs and local audit key
 browser-demo/
 talk2data/api/static/browser-report/
+backend/api/static/browser-report/
+talk2data/api/static/architecture-guide/
+backend/api/static/architecture-guide/
+**/api/static/browser-report/
+**/api/static/architecture-guide/
 
-.venv-evals/
 eval-results/
 .deepeval/
 
 docs/architecture/qa/
-
-talk2data/api/static/architecture-guide/
 
 # Frontend builds
 frontend/node_modules/
@@ -29,3 +38,10 @@ frontend/dist/
 *.log
 scratch/
 *.tex
+
+# Editor & OS files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+

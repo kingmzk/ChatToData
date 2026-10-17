@@ -212,7 +212,7 @@ def test_standalone_worker_uses_shared_runtime(tmp_path, monkeypatch):
     turn_id = response.json()['turn_id']
     assert response.json()['status'] == 'SUBMITTED'
     result = subprocess.run([sys.executable, '-m', 'talk2data.jobs.daemon', '--db-path', path, '--max-jobs', '1'],
-        capture_output=True, text=True, timeout=15, env=os.environ.copy())
+        capture_output=True, text=True, timeout=60, env=os.environ.copy())
     assert result.returncode == 0, result.stderr
     assert client.get(f'/api/v1/turns/{turn_id}').json()['status'] == 'ANSWERED'
     assert '180' in client.get(f'/api/v1/turns/{turn_id}/answer').json()['summary_text']

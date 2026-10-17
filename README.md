@@ -1,38 +1,82 @@
 # ChatToData (Talk2Data)
 
-Governed conversational analytics with an explicit semantic catalog. The supported physical source is SQLite. Standard calculations, forecasts, anomalies, scenarios and goal seek are deterministic; Gemini interprets questions and does not calculate results. Presentation uses server templates.
+Governed conversational analytics with an explicit semantic catalog. The supported physical source is SQLite. Standard calculations, forecasts, anomalies, scenarios and goal seek are deterministic; Gemini interprets questions and does not calculate results. Presentation uses server templates and modern React Executive Studio.
 
-## Local setup (PowerShell, Python 3.11 or later)
+---
 
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m talk2data.demo --directory demo
-Copy-Item .env.example .env
+## 📁 Project Structure
+
+```
+ChatToData/
+├── run.py                 # ⭐ Single-command launcher (Starts API, Worker, and serves UI)
+├── start.bat              # ⭐ 1-Click Windows Batch Launcher (Double-click to start)
+├── start.ps1              # ⭐ 1-Click PowerShell Script (.\start.ps1)
+│
+├── frontend/              # 🎨 Frontend Web Application (React 19 + Vite)
+│   ├── src/               # Executive Studio Dashboard, Conversation Stream, Catalog Dictionary, Audit UI
+│   ├── dist/              # Production compiled bundle (served by FastAPI at http://localhost:8000)
+│   └── package.json       # Node.js dependencies
+│
+├── backend/               # ⚙️ Backend Governed Analytics Engine
+│   ├── api/               # FastAPI REST service, routes, CORS & authentication
+│   ├── graph/             # Target Architecture LangGraph bounded state workflow
+│   ├── catalog/           # Semantic catalog schema, dimensions, measures, scenario models
+│   ├── compiler/          # Read-only SQL compiler & AST generator
+│   ├── execution/         # GenericSourceGateway and Decimal-exact analysis kernel
+│   ├── science/           # Forecast (with holdout backtest), MAD Anomaly, Scenario & Goal Seek
+│   ├── jobs/              # Durable job worker, lease fencing & daemon
+│   ├── security/          # Tenant isolation & disclosure suppression
+│   └── storage/           # SQLite persistent repository, SHA-256 evidence sealing & HMAC audit chain
+│
+├── tests/                 # 🧪 Automated Pytest test suite (176 tests across all layers)
+├── browser-demo/          # 💾 Demo SQLite databases, runtime configurations & test fixtures
+├── docs/                  # 📚 Architecture guide, Word manual, diagrams, and historical reports
+│   ├── architecture/      # Step-by-step architecture guide, schemas, diagrams
+│   └── reports/           # Verification, browser test & DeepEval audit reports
+├── requirements.txt       # Python dependencies (including LangGraph, FastAPI, Google GenAI)
+├── sample.env             # Environment template (copy to .env)
+└── .env.example           # Alternative environment template
 ```
 
-Edit `.env` with your Gemini API key, your explicitly selected `TALK2DATA_MODEL`, and a strong `TALK2DATA_AUDIT_KEY`. Preserve any existing `.env`; the copy command is only for a new installation. The demo contains synthetic data only. It refuses to overwrite existing demo files. To initialize or upgrade the application database, use:
+---
 
+## 🚀 How to Run the Application (Easiest Way)
+
+You do **not** need to juggle multiple terminals or remember complex module commands. Everything is wired into a single launcher:
+
+### 1-Click Launch (Windows / PowerShell)
 ```powershell
-python -c "from talk2data.storage.repository import PersistentApplicationStore; PersistentApplicationStore('talk2data.db').conn.close()"
+.\start.ps1
+```
+*(Or simply double-click `start.bat` in File Explorer)*
+
+### Or via Python
+```powershell
+.\.venv\Scripts\python run.py
 ```
 
-In one terminal:
+### What this does automatically:
+1. Detects your `.venv` and loads `.env`
+2. Automatically ensures the demo SQLite database and semantic catalog exist
+3. Starts the **FastAPI REST API** on `http://127.0.0.1:8000`
+4. Starts the **Durable Background Worker** thread (so analysis jobs process instantly)
+5. Opens your default web browser to the **Executive Analytics Studio** at `http://127.0.0.1:8000/`
+
+---
+
+## 🛠️ Frontend Development Mode (Hot Reload)
+
+If you are developing or modifying the React frontend with Vite hot reloading:
 
 ```powershell
-python -m talk2data.api.server --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python run.py --dev
 ```
+This starts both the backend API + worker AND launches `npm run dev` in `frontend/`, opening the Vite development studio at `http://localhost:5173/`.
 
-In another terminal, from the same project directory and environment:
+---
 
-```powershell
-python -m talk2data.jobs.daemon
-```
+## ⚙️ Manual Multi-Process Setup (Optional)
 
-Open http://127.0.0.1:8000. Select `demo_sales`. Examples: “What was revenue in 2024?”, “Forecast annual revenue for the next two years”. Missing interpretation configuration produces a failed request, not a fabricated result. Ordinary API requests enqueue work and return 202; the standalone worker processes it. Injected demo/test managers use an embedded worker after the response is sent.
-
-Both processes read `TALK2DATA_RUNTIME_CONFIG`. Catalog releases and source permissions come from this declarative JSON; the source connection opens read-only. Keep old catalog releases available for active turns and previously published answers. Restart processes after changing runtime configuration. Do not use development authentication outside local development.
 
 ## Configuration and production
 
