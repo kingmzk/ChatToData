@@ -1,4 +1,22 @@
 import React from 'react';
+
+function safeNum(val) {
+  if (val === null || val === undefined) return 0;
+  if (typeof val === 'number') return val;
+  const cleaned = String(val).replace(/,/g, '').trim();
+  const n = Number(cleaned);
+  return isNaN(n) ? 0 : n;
+}
+
+function formatVal(val, unit = '') {
+  if (val === null || val === undefined) return 'N/A';
+  if (typeof val === 'number') return `${val.toLocaleString()} ${unit}`.trim();
+  const cleaned = String(val).replace(/,/g, '').trim();
+  const n = Number(cleaned);
+  if (isNaN(n)) return `${val} ${unit}`.trim();
+  return `${n.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${unit}`.trim();
+}
+
 import { BarChart2, TrendingUp, AlertTriangle, Target, Sliders } from 'lucide-react';
 
 export default function AnalyticsChart({ charts }) {
@@ -23,7 +41,7 @@ export default function AnalyticsChart({ charts }) {
                 {chart.labels.map((label, lIdx) => {
                   const val = values[lIdx];
                   const isNull = val === null || val === undefined;
-                  const pct = isNull ? 0 : Math.max(0, Math.min(100, (Math.abs(Number(val)) / maximum) * 100));
+                  const pct = isNull ? 0 : Math.max(0, Math.min(100, (Math.abs(safeNum(val)) / maximum) * 100));
                   return (
                     <div key={lIdx} className="chart-bar-row">
                       <div className="chart-bar-header">
@@ -32,7 +50,7 @@ export default function AnalyticsChart({ charts }) {
                           {isNull ? (
                             <span className="suppression-tag">🔒 Suppressed</span>
                           ) : (
-                            `${Number(val).toLocaleString()} ${chart.unit || ''}`
+                            formatVal(val, chart.unit)
                           )}
                         </span>
                       </div>
@@ -71,7 +89,7 @@ export default function AnalyticsChart({ charts }) {
                     <div key={lIdx} className={`science-point ${isFc ? 'predicted' : 'observed'}`}>
                       <div className="science-point-label">{lbl}</div>
                       <div className="science-point-val" style={{ fontFamily: 'var(--font-mono)' }}>
-                        {val !== null ? `${Number(val).toLocaleString()} ${chart.unit || ''}` : 'N/A'}
+                        {val !== null ? formatVal(val, chart.unit) : 'N/A'}
                       </div>
                       <div className="science-point-status" style={{ fontSize: '0.72rem', color: isFc ? '#60a5fa' : 'var(--text-dim)' }}>
                         {isFc ? `PREDICTED${pi}` : 'OBSERVED'}
@@ -102,7 +120,7 @@ export default function AnalyticsChart({ charts }) {
                     <div key={lIdx} className={`science-point ${isAnom ? 'anomaly-detected' : 'normal'}`}>
                       <div className="science-point-label">{lbl}</div>
                       <div className="science-point-val" style={{ fontFamily: 'var(--font-mono)' }}>
-                        {val !== null ? `${Number(val).toLocaleString()} ${chart.unit || ''}` : 'N/A'}
+                        {val !== null ? formatVal(val, chart.unit) : 'N/A'}
                       </div>
                       <div className="science-point-status" style={{ fontSize: '0.72rem', color: isAnom ? '#ef4444' : '#10b981' }}>
                         {isAnom ? `⚠️ ANOMALOUS (dev: ${dev})` : 'NORMAL'}
@@ -130,14 +148,14 @@ export default function AnalyticsChart({ charts }) {
                 <div className="scenario-val-box">
                   <div className="scenario-val-label">{chart.baseline_label || 'Baseline'}</div>
                   <div className="scenario-val-num" style={{ fontFamily: 'var(--font-mono)' }}>
-                    {chart.baseline_value !== undefined ? `${Number(chart.baseline_value).toLocaleString()} ${chart.unit || ''}` : 'N/A'}
+                    {chart.baseline_value !== undefined ? formatVal(chart.baseline_value, chart.unit) : 'N/A'}
                   </div>
                 </div>
                 <div className="scenario-divider">➔</div>
                 <div className="scenario-val-box highlighted">
                   <div className="scenario-val-label">{chart.simulated_label || (isGoal ? 'Solution Target' : 'Simulated')}</div>
                   <div className="scenario-val-num" style={{ fontFamily: 'var(--font-mono)', color: isGoal ? '#10b981' : '#c084fc' }}>
-                    {chart.simulated_value !== undefined ? `${Number(chart.simulated_value).toLocaleString()} ${chart.unit || ''}` : 'N/A'}
+                    {chart.simulated_value !== undefined ? formatVal(chart.simulated_value, chart.unit) : 'N/A'}
                   </div>
                 </div>
               </div>

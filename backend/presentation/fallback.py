@@ -27,13 +27,14 @@ class RenderedAnswerView:
     limitations: list[str]
     is_suppressed: bool
     evidence_digest: str
+    sql_query: Optional[str] = None
 
 
 class DeterministicPresentationFallback:
     """Renders answers strictly from sealed evidence packages with zero raw row exposure."""
 
     @traced_stage('answer_presentation')
-    def render(self, evidence: SealedEvidencePackage) -> RenderedAnswerView:
+    def render(self, evidence: SealedEvidencePackage, sql_query: Optional[str] = None) -> RenderedAnswerView:
         """Deterministically render narrative, KPI cards, and data table from sealed facts."""
         facts = evidence.facts
         if not facts:
@@ -46,6 +47,7 @@ class DeterministicPresentationFallback:
                 limitations=[],
                 is_suppressed=False,
                 evidence_digest=evidence.package_digest,
+                sql_query=sql_query,
             )
 
         kpi_cards: list[RenderedKpiCard] = []
@@ -364,4 +366,5 @@ class DeterministicPresentationFallback:
             limitations=sorted(list(all_limitations)),
             is_suppressed=any_suppressed,
             evidence_digest=evidence.package_digest,
+            sql_query=sql_query,
         )

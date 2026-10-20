@@ -6,20 +6,21 @@ export default function DataTable({ table, turnId }) {
   const [sortCol, setSortCol] = useState(null);
   const [sortAsc, setSortAsc] = useState(true);
 
-  if (!table || !table.columns || table.columns.length === 0) return null;
+  const columns = table?.columns || [];
+  const rows = table?.rows || [];
 
   const filteredRows = useMemo(() => {
-    let rows = table.rows || [];
+    let result = rows;
     if (search.trim()) {
       const q = search.toLowerCase();
-      rows = rows.filter(row => {
+      result = result.filter(row => {
         const values = Array.isArray(row) ? row : Object.values(row);
         return values.some(val => val !== null && val !== undefined && String(val).toLowerCase().includes(q));
       });
     }
-    if (sortCol !== null && table.columns && table.columns[sortCol]) {
-      const colName = table.columns[sortCol];
-      rows = [...rows].sort((a, b) => {
+    if (sortCol !== null && columns[sortCol]) {
+      const colName = columns[sortCol];
+      result = [...result].sort((a, b) => {
         const valA = Array.isArray(a) ? a[sortCol] : (a[colName] !== undefined ? a[colName] : a[colName.toLowerCase()]);
         const valB = Array.isArray(b) ? b[sortCol] : (b[colName] !== undefined ? b[colName] : b[colName.toLowerCase()]);
         if (valA === valB) return 0;
@@ -33,8 +34,10 @@ export default function DataTable({ table, turnId }) {
         return sortAsc ? String(valA).localeCompare(String(valB)) : String(valB).localeCompare(String(valA));
       });
     }
-    return rows;
-  }, [table.rows, table.columns, search, sortCol, sortAsc]);
+    return result;
+  }, [rows, columns, search, sortCol, sortAsc]);
+
+  if (!table || columns.length === 0) return null;
 
   const handleHeaderClick = (colIdx) => {
     if (sortCol === colIdx) {

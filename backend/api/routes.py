@@ -307,6 +307,9 @@ def get_source_catalog(
             {
                 "id": m.id,
                 "name": m.name,
+                "table": m.table,
+                "column": m.column,
+                "description": m.description,
                 "unit": m.unit,
                 "aggregation": m.aggregation.value if hasattr(m.aggregation, "value") else str(m.aggregation),
                 "allowed_families": [f.value if hasattr(f, "value") else str(f) for f in m.allowed_families],
@@ -318,6 +321,8 @@ def get_source_catalog(
             {
                 "id": d.id,
                 "name": d.name,
+                "table": d.table,
+                "column": d.column,
                 "data_type": d.data_type.value if hasattr(d.data_type, "value") else str(d.data_type),
             }
             for d in vocab.dimensions.values()

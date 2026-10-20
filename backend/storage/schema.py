@@ -151,11 +151,16 @@ ALTER TABLE turns ADD COLUMN execution_state_json TEXT;
 ALTER TABLE turns ADD COLUMN actor_json TEXT;
 """
 
+MIGRATION_005_SQL = """
+ALTER TABLE answers ADD COLUMN sql_query TEXT;
+"""
+
 MIGRATIONS = [
     (1, "001_phase1_phase2_core", MIGRATION_001_SQL),
     (2, "002_phase3_decision_science", MIGRATION_002_SQL),
     (3, "003_phase4_advanced_controls", MIGRATION_003_SQL),
     (4, "004_durable_execution_context", MIGRATION_004_SQL),
+    (5, "005_answer_sql_query", MIGRATION_005_SQL),
 ]
 
 

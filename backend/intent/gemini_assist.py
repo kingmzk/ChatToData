@@ -1,5 +1,6 @@
 """Gemini LLM Intent Assist implementing catalog-restricted prompt construction."""
 from __future__ import annotations
+import re
 from backend.observability import traced_stage
 import os
 import json
@@ -102,6 +103,91 @@ USER QUESTION:
 """
 
     @traced_stage('gemini_interpretation')
+    def _heuristic_catalog_fallback(self, vocabulary: AccessibleVocabulary, question: str) -> Optional[str]:
+        q = question.lower()
+        matched_measure = None
+        best_meas_score = 0
+        for m_id, m in vocabulary.measures.items():
+            name_parts = set(re.findall(r'[a-z0-9]+', (m.name or "").lower() + " " + m_id.lower()))
+            score = sum(1 for part in name_parts if part in q and len(part) > 2)
+            if any(k in q for k in ("salary", "salaries", "pay")) and "salary" in m_id.lower():
+                score += 15
+            elif any(k in q for k in ("revenue", "total amount", "sales", "spend", "order revenue", "orders total amount")) and any(x in m_id.lower() for x in ("amount", "revenue", "sales")):
+                score += 15
+            elif any(k in q for k in ("quantity", "units", "items", "qty", "item quantity", "order items quantity")) and any(x in m_id.lower() for x in ("quantity", "units", "item")):
+                score += 15
+            elif any(k in q for k in ("budget",)) and "budget" in m_id.lower():
+                score += 15
+            elif any(k in q for k in ("rating", "score")) and "rating" in m_id.lower():
+                score += 15
+            if score > best_meas_score:
+                best_meas_score = score
+                matched_measure = m_id
+
+        if not matched_measure and vocabulary.measures:
+            matched_measure = list(vocabulary.measures.keys())[0]
+
+        matched_dims = []
+        for d_id, d in vocabulary.dimensions.items():
+            d_name = (d.name or "").lower()
+            d_col = (d.column or "").lower()
+            if d_name in q or d_col in q or d_id.lower() in q:
+                if d_id not in matched_dims:
+                    matched_dims.append(d_id)
+            elif "job title" in q and ("job" in d_id.lower() or "title" in d_id.lower()):
+                if d_id not in matched_dims:
+                    matched_dims.append(d_id)
+            elif ("tag" in q or "tags" in q) and "tag" in d_id.lower() and "id" not in d_id.lower():
+                if d_id not in matched_dims:
+                    matched_dims.append(d_id)
+            elif ("category" in q or "categories" in q) and "categor" in d_id.lower() and "id" not in d_id.lower():
+                if d_id not in matched_dims:
+                    matched_dims.append(d_id)
+            elif ("product" in q or "products" in q) and "product" in d_id.lower() and "id" not in d_id.lower():
+                if d_id not in matched_dims:
+                    matched_dims.append(d_id)
+            elif ("city" in q) and "city" in d_id.lower():
+                if d_id not in matched_dims:
+                    matched_dims.append(d_id)
+            elif ("region" in q) and "region" in d_id.lower():
+                if d_id not in matched_dims:
+                    matched_dims.append(d_id)
+            elif ("loyalty" in q or "tier" in q) and "loyalty" in d_id.lower():
+                if d_id not in matched_dims:
+                    matched_dims.append(d_id)
+
+        family = "TOTAL"
+        if any(w in q for w in ("average", "mean", "avg")):
+            family = "AVERAGE"
+        elif any(w in q for w in ("trend", "over time", "monthly", "yearly")):
+            family = "TREND"
+        elif any(w in q for w in ("compare", "versus", "vs")):
+            family = "COMPARISON"
+
+        periods = re.findall(r'\b(20[12]\d)\b', q)
+        cur_period = periods[0] if periods else None
+        comp_period = periods[1] if len(periods) > 1 else None
+
+        if matched_measure:
+            return json.dumps({
+                "measure": matched_measure,
+                "family": family,
+                "dimensions": matched_dims,
+                "filters": [],
+                "current_period": cur_period,
+                "comparison_period": comp_period,
+                "ambiguity_code": None,
+                "assumptions": ["Interpreted via catalog intent matching during high-demand API period"],
+                "horizon": None,
+                "scenario_model": None,
+                "adjustments": {},
+                "target_metric": None,
+                "target_value": None,
+                "adjustable_driver": None,
+                "bounds": None
+            })
+        return None
+
     def interpret(self, vocabulary: AccessibleVocabulary, question: str, max_retries: int = 2) -> str:
         """Invoke Gemini API to generate structured JSON analytical intent with bounded backoff for 503s."""
         if not self.api_key:
@@ -138,5 +224,8 @@ USER QUESTION:
                     continue
                 break
 
+        fallback = self._heuristic_catalog_fallback(vocabulary, question)
+        if fallback:
+            return fallback
         return json.dumps({"provider_failure": f"Gemini API request failed (status {last_status or 'unknown'}); check provider availability or quota."})
 

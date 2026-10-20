@@ -1,5 +1,5 @@
 import React from 'react';
-import { Shield, Lock, FileText, CheckCircle, Database, Layers, Check } from 'lucide-react';
+import { Shield, Lock, FileText, CheckCircle, Check } from 'lucide-react';
 
 export default function GovernanceAudit({ turns, answers }) {
   const perimeterLayers = [

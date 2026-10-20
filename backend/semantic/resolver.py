@@ -169,7 +169,10 @@ class SemanticResolver:
         grouping_cols = [f"{d.table}.{d.column}" for d in resolved_dims]
 
         # Aggregation expression
-        agg_func = measure_def.aggregation.value
+        if intent.family == AnalysisFamily.AVERAGE and measure_def.aggregation.value != "AVG":
+            agg_func = "AVG"
+        else:
+            agg_func = measure_def.aggregation.value
         if agg_func == "COUNT_DISTINCT":
             agg_expr = f"COUNT(DISTINCT {base_table.table_name}.{measure_def.column})"
         else:

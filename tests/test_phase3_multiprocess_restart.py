@@ -47,12 +47,12 @@ def test_multiprocess_job_execution_and_restart_recovery(tmp_path, test_setup):
     # We invoke a python snippet that imports and runs DurableJobWorker with configured test setup
     worker_script = f"""
 import sys
-from talk2data.storage.repository import PersistentApplicationStore
-from talk2data.jobs.worker import DurableJobWorker
-from talk2data.lifecycle.session import ConversationLifecycleManager
-from talk2data.security.auth import SecurityRuntime
-from talk2data.catalog.store import SemanticCatalogStore
-from talk2data.execution.gateway import GenericSourceGateway
+from backend.storage.repository import PersistentApplicationStore
+from backend.jobs.worker import DurableJobWorker
+from backend.lifecycle.session import ConversationLifecycleManager
+from backend.security.auth import SecurityRuntime
+from backend.catalog.store import SemanticCatalogStore
+from backend.execution.gateway import GenericSourceGateway
 
 store = PersistentApplicationStore(r"{db_file}")
 sec = SecurityRuntime()
@@ -68,7 +68,7 @@ cur.execute("CREATE TABLE orders (id TEXT, tenant_id TEXT, customer_id TEXT, amo
 cur.execute("INSERT INTO orders VALUES ('o1', 'tenant_a', 'c1', 50000.0, '2024')")
 test_conn.commit()
 
-from talk2data.catalog.schema import SemanticCatalog, TableDefinition, MeasureDefinition, DimensionDefinition, DataType, AggregationType
+from backend.catalog.schema import SemanticCatalog, TableDefinition, MeasureDefinition, DimensionDefinition, DataType, AggregationType
 tbl = TableDefinition(table_name="orders", columns={{"amount": DataType.DECIMAL, "period": DataType.STRING}})
 meas = MeasureDefinition(id="sales_revenue", name="Sales Revenue", description="Revenue", table="orders", column="amount", aggregation=AggregationType.SUM, base_grain="order", unit="USD")
 dim = DimensionDefinition(id="period", name="Period", table="orders", column="period", data_type=DataType.STRING)

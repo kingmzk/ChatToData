@@ -59,6 +59,13 @@ def ensure_environment() -> dict[str, str]:
     except Exception as e:
         print(f"Note: Complex-join demo initialization skipped ({e})")
 
+    # Keep the high-dimensional Enterprise Nexus (multi-hop, junction, self-ref) available in demo.
+    try:
+        from backend.enterprise_nexus_demo import add_enterprise_nexus_demo
+        add_enterprise_nexus_demo(demo_dir)
+    except Exception as e:
+        print(f"Note: Enterprise Nexus demo initialization skipped ({e})")
+
     # Ensure audit key
     audit_key_file = demo_dir / ".audit-key"
     if not audit_key_file.exists():
@@ -68,6 +75,13 @@ def ensure_environment() -> dict[str, str]:
     env.setdefault("TALK2DATA_ENV", "development")
     env.setdefault("TALK2DATA_RUNTIME_CONFIG", str(demo_dir / "runtime.json"))
     env.setdefault("TALK2DATA_DB_PATH", str(demo_dir / "application.sqlite"))
+
+    # Ensure paths are absolute so running from subdirectories (like backend/) works
+    if "TALK2DATA_DB_PATH" in env and not Path(env["TALK2DATA_DB_PATH"]).is_absolute():
+        env["TALK2DATA_DB_PATH"] = str((ROOT_DIR / env["TALK2DATA_DB_PATH"]).resolve())
+    if "TALK2DATA_RUNTIME_CONFIG" in env and not Path(env["TALK2DATA_RUNTIME_CONFIG"]).is_absolute():
+        env["TALK2DATA_RUNTIME_CONFIG"] = str((ROOT_DIR / env["TALK2DATA_RUNTIME_CONFIG"]).resolve())
+
     if "TALK2DATA_AUDIT_KEY" not in env and audit_key_file.exists():
         env["TALK2DATA_AUDIT_KEY"] = audit_key_file.read_text(encoding="utf-8").strip()
 

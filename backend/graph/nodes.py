@@ -581,7 +581,9 @@ def governed_analytics_node(state: GraphState, config: RunnableConfig) -> dict[s
             pkg = compiler.compile(plan)
             combined_rows = gateway.execute_package(pkg, source_id=source_id)
             raw_facts = kernel.analyze(plan=plan, rows=combined_rows, pin=pin)
+            compiled_sql = pkg.sql
             
+        services["_last_compiled_sql"] = locals().get("compiled_sql") or getattr(locals().get("pkg"), "sql", None)
         raw_facts = [replace(f, fact_id=f"{turn_id}_fact_{idx}") for idx, f in enumerate(raw_facts)]
         
         # Step 4: Privacy & Disclosure Protection
@@ -666,7 +668,8 @@ def deterministic_presentation_node(state: GraphState, config: RunnableConfig) -
     if not sealed_evidence:
         return {"deterministic_presentation": {}}
         
-    rendered_view = fallback.render(sealed_evidence)
+    compiled_sql = services.get("_last_compiled_sql")
+    rendered_view = fallback.render(sealed_evidence, sql_query=compiled_sql)
     charts = ChartGenerator().generate_charts(list(sealed_evidence.facts))
     services["_last_rendered_view"] = rendered_view
     
@@ -689,6 +692,7 @@ def deterministic_presentation_node(state: GraphState, config: RunnableConfig) -
         "limitations": rendered_view.limitations,
         "is_suppressed": rendered_view.is_suppressed,
         "evidence_digest": rendered_view.evidence_digest,
+        "sql_query": rendered_view.sql_query,
     }
     
     return {

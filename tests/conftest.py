@@ -4,7 +4,7 @@ import sqlite3
 import pytest
 from decimal import Decimal
 
-from talk2data.catalog.schema import (
+from backend.catalog.schema import (
     SemanticCatalog,
     TableDefinition,
     MeasureDefinition,
@@ -18,11 +18,11 @@ from talk2data.catalog.schema import (
     ScenarioModelDefinition,
     ScenarioDriverDefinition,
 )
-from talk2data.catalog.store import SemanticCatalogStore
-from talk2data.domain.models import ApiActor
-from talk2data.execution.gateway import GenericSourceGateway
-from talk2data.lifecycle.session import ConversationLifecycleManager
-from talk2data.security.auth import SecurityRuntime
+from backend.catalog.store import SemanticCatalogStore
+from backend.domain.models import ApiActor
+from backend.execution.gateway import GenericSourceGateway
+from backend.lifecycle.session import ConversationLifecycleManager
+from backend.security.auth import SecurityRuntime
 
 
 @pytest.fixture

@@ -796,7 +796,9 @@ class ConversationLifecycleManager:
                 pkg = self.compiler.compile(plan)
                 rows = self.gateway.execute_package(pkg, source_id=target_source_id)
                 raw_facts = self.kernel.analyze(plan=plan, rows=rows, pin=pin)
+                compiled_sql = pkg.sql
 
+            captured_sql = locals().get("compiled_sql") or (getattr(locals().get("pkg"), "sql", None) if "pkg" in locals() else None)
             raw_facts = [replace(f, fact_id=f"{turn.turn_id}_fact_{index}") for index, f in enumerate(raw_facts)]
 
             # 3. Governed disclosure inspection (minimum-group and complementary suppression)
@@ -838,7 +840,7 @@ class ConversationLifecycleManager:
 
             # 6. Composition & Presentation Fallback
             turn.transition_to(TurnStatus.COMPOSING)
-            rendered_view = self.presentation.render(sealed_evidence)
+            rendered_view = self.presentation.render(sealed_evidence, sql_query=locals().get("captured_sql"))
             self._answers[turn.turn_id] = rendered_view
             self._evidence_packages[turn.turn_id] = sealed_evidence
 

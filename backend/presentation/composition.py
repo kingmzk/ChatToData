@@ -187,6 +187,7 @@ class ValidatedAnswerComposer:
                 limitations=fallback_view.limitations,
                 is_suppressed=fallback_view.is_suppressed,
                 evidence_digest=fallback_view.evidence_digest,
+                sql_query=getattr(fallback_view, 'sql_query', None),
             )
         except ClaimValidationError:
             # Fall back safely to server-rendered deterministic templates

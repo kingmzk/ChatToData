@@ -445,31 +445,61 @@ class PersistentApplicationStore:
                 return str(existing_ans["answer_id"])
 
             # Insert answer version
-            self.conn.execute(
-                """
-                INSERT INTO answers (
-                    answer_id, turn_id, tenant_id, version, summary_text,
-                    kpi_cards_json, table_columns_json, table_rows_json, charts_json,
-                    assumptions_json, limitations_json, is_suppressed, evidence_digest, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    answer_id,
-                    turn_id,
-                    actor.tenant_id,
-                    version,
-                    view.summary_text,
-                    cards_json,
-                    columns_json,
-                    rows_json,
-                    charts_json,
-                    assumptions_json,
-                    limitations_json,
-                    1 if view.is_suppressed else 0,
-                    view.evidence_digest,
-                    now,
-                ),
-            )
+            sql_query_to_save = getattr(view, "sql_query", None)
+            cols = [col[1] for col in self.conn.execute("PRAGMA table_info(answers)").fetchall()]
+            if "sql_query" in cols:
+                self.conn.execute(
+                    """
+                    INSERT INTO answers (
+                        answer_id, turn_id, tenant_id, version, summary_text,
+                        kpi_cards_json, table_columns_json, table_rows_json, charts_json,
+                        assumptions_json, limitations_json, is_suppressed, evidence_digest, sql_query, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        answer_id,
+                        turn_id,
+                        actor.tenant_id,
+                        version,
+                        view.summary_text,
+                        cards_json,
+                        columns_json,
+                        rows_json,
+                        charts_json,
+                        assumptions_json,
+                        limitations_json,
+                        1 if view.is_suppressed else 0,
+                        view.evidence_digest,
+                        sql_query_to_save,
+                        now,
+                    ),
+                )
+            else:
+                self.conn.execute(
+                    """
+                    INSERT INTO answers (
+                        answer_id, turn_id, tenant_id, version, summary_text,
+                        kpi_cards_json, table_columns_json, table_rows_json, charts_json,
+                        assumptions_json, limitations_json, is_suppressed, evidence_digest, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        answer_id,
+                        turn_id,
+                        actor.tenant_id,
+                        version,
+                        view.summary_text,
+                        cards_json,
+                        columns_json,
+                        rows_json,
+                        charts_json,
+                        assumptions_json,
+                        limitations_json,
+                        1 if view.is_suppressed else 0,
+                        view.evidence_digest,
+                        now,
+                    ),
+                )
 
             # Update turn to ANSWERED
             self.conn.execute(
@@ -529,6 +559,7 @@ class PersistentApplicationStore:
         res["assumptions"] = json.loads(res["assumptions_json"])
         res["limitations"] = json.loads(res["limitations_json"])
         res["is_suppressed"] = bool(res["is_suppressed"])
+        res["sql_query"] = res.get("sql_query")
         return res
 
     # ---------------------------------------------------------

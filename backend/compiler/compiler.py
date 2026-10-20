@@ -98,13 +98,23 @@ class GovernedQueryCompiler:
         # 3. Aggregation expression with join fan-out prevention
         measure_col = plan.measure.column
         self._validate_identifier(measure_col)
-        agg_type = plan.measure.aggregation.value
+        fam = getattr(plan.family, "value", plan.family)
+        agg_type = "AVG" if (fam == "AVERAGE" and plan.measure.aggregation.value != "COUNT_DISTINCT") else plan.measure.aggregation.value
 
         if plan.fan_out_protection_required and len(plan.join_edges) > 0:
-            child_edge = plan.join_edges[0]
-            child_table = child_edge.to_table
-            child_to_col = child_edge.to_column
-            parent_from_col = child_edge.from_column
+            # Find the edge connecting directly to the base_table with correct orientation
+            child_edge = next(
+                (e for e in plan.join_edges if e.from_table == base_tbl.table_name or e.to_table == base_tbl.table_name),
+                plan.join_edges[0]
+            )
+            if child_edge.from_table == base_tbl.table_name:
+                child_table = child_edge.to_table
+                child_to_col = child_edge.to_column
+                parent_from_col = child_edge.from_column
+            else:
+                child_table = child_edge.from_table
+                child_to_col = child_edge.from_column
+                parent_from_col = child_edge.to_column
 
             # Correlated child subquery MUST enforce tenant scope
             child_tbl_def = next((t for t in plan.required_tables if t.table_name == child_table), None)
