@@ -98,6 +98,7 @@ class GraphState(TypedDict, total=False):
     protected_evidence_reference: Optional[str]
     evidence_digest: Optional[str]
     safe_display_facts: Optional[list[dict[str, Any]]]
+    compiled_sql: Optional[str]
     
     # Presentation & Narrative
     deterministic_presentation: Optional[dict[str, Any]]

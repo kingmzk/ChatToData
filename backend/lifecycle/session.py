@@ -193,7 +193,14 @@ class ConversationLifecycleManager:
                 "thread_id": thread_id,
                 "services": services,
                 "actor": actor,
-            }
+            },
+            "run_name": f"turn_{turn.turn_id[:8]}",
+            "metadata": {
+                "turn_id": turn.turn_id,
+                "conversation_id": conversation_id,
+                "source_id": source_id,
+            },
+            "tags": ["talk2data", "governed_analytics", source_id],
         }
 
         self.graph.invoke(initial_state, config)
@@ -290,7 +297,14 @@ class ConversationLifecycleManager:
                 "thread_id": thread_id,
                 "services": services,
                 "actor": actor,
-            }
+            },
+            "run_name": f"clarification_{turn.turn_id[:8]}",
+            "metadata": {
+                "turn_id": turn.turn_id,
+                "choice_id": choice_id,
+                "source_id": turn.source_id,
+            },
+            "tags": ["talk2data", "clarification", turn.source_id],
         }
         curr_state = self.graph.get_state(config)
         if not curr_state.values:

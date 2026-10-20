@@ -86,8 +86,17 @@ def ensure_environment() -> dict[str, str]:
         env["TALK2DATA_AUDIT_KEY"] = audit_key_file.read_text(encoding="utf-8").strip()
 
     for k, v in env.items():
-        if k.startswith("TALK2DATA_") or k in ("GEMINI_API_KEY", "LANGSMITH_API_KEY", "LANGSMITH_TRACING"):
+        if k.startswith("TALK2DATA_") or k in ("GEMINI_API_KEY", "LANGSMITH_API_KEY", "LANGSMITH_TRACING", "LANGSMITH_PROJECT"):
             os.environ[k] = v
+
+    # Propagate LangSmith configuration to standard LangGraph/LangChain tracing
+    if os.getenv("LANGSMITH_TRACING", "").lower() in ("true", "1", "yes"):
+        os.environ["LANGCHAIN_TRACING_V2"] = "true"
+        api_key = os.getenv("LANGSMITH_API_KEY")
+        if api_key:
+            os.environ.setdefault("LANGCHAIN_API_KEY", api_key)
+        project = os.getenv("LANGSMITH_PROJECT", "Talk2Data")
+        os.environ.setdefault("LANGCHAIN_PROJECT", project)
 
     return env
 

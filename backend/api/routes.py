@@ -14,6 +14,7 @@ from backend.export.export import SecureExportService
 from backend.jobs.worker import DurableJobWorker
 from backend.security.auth import AuthorizationError
 from backend.storage.repository import PersistentApplicationStore
+from backend.telemetry import get_telemetry_snapshot
 
 
 router = APIRouter(prefix="/api/v1", tags=["Talk2Data API"])
@@ -445,5 +446,14 @@ async def upload_source_database(
         "source_id": source_id,
         "manifest": manifest,
     }
+
+
+@router.get("/telemetry/stats")
+def get_telemetry_stats(
+    actor: ApiActor = Depends(get_current_actor),
+):
+    """Retrieve operational telemetry and observability stats for the tenant."""
+    return get_telemetry_snapshot()
+
 
 

@@ -1,5 +1,5 @@
 import pytest
-from talk2data.observability import traced_stage
+from backend.observability import traced_stage
 
 
 def test_trace_contains_only_stage_status(monkeypatch):

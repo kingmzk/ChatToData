@@ -4,10 +4,12 @@ from backend.observability import traced_stage
 import json
 import logging
 import threading
+import time
 import uuid
 from backend.domain.models import TurnStatus
 from backend.security.auth import AuthorizationError
 from backend.storage.repository import LeaseFencingError
+from backend.telemetry import record_turn_outcome, update_queue_depth
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +29,10 @@ class DurableJobWorker:
             return self._process_next_job()
 
     def _process_next_job(self):
+        try:
+            update_queue_depth(self.store.get_queued_job_count())
+        except Exception:
+            pass
         job = self.store.claim_next_job(self.worker_id, self.lease_seconds)
         if not job:
             return None
@@ -40,6 +46,7 @@ class DurableJobWorker:
         actor = self.security.authenticate_actor(job["tenant_id"], job["subject_id"],
             roles=tuple(identity.get("roles", ["analyst"])), permissions=set(identity.get("permissions", [])))
         stopped = threading.Event()
+        t0 = time.time()
         def heartbeat():
             while not stopped.wait(max(0.1, self.lease_seconds / 3)):
                 try:
@@ -95,6 +102,19 @@ class DurableJobWorker:
                         retryable="Provider execution failure" not in (turn.error_message or ""))
                 else:
                     self.store.complete_job(job_id, self.worker_id, token)
+
+            # Record turn completion telemetry
+            try:
+                status_str = final_status.value if hasattr(final_status, "value") else str(final_status)
+                record_turn_outcome(
+                    turn_status=status_str,
+                    source_id=row.get("source_id", "unknown"),
+                    duration_sec=time.time() - t0,
+                    decline_reason=getattr(turn, "decline_reason", None),
+                )
+            except Exception:
+                pass
+
         except LeaseFencingError:
             self.manager._answers.pop(turn_id, None)
             self.manager._evidence_packages.pop(turn_id, None)
@@ -108,13 +128,34 @@ class DurableJobWorker:
                     self.store.complete_job(job_id, self.worker_id, token)
                 except LeaseFencingError:
                     pass
+            try:
+                record_turn_outcome(
+                    turn_status="DECLINED",
+                    source_id=row.get("source_id", "unknown") if "row" in locals() and row else "unknown",
+                    duration_sec=time.time() - t0,
+                    decline_reason="Current permissions do not allow this analysis",
+                )
+            except Exception:
+                pass
         except Exception:
             logger.exception("Job execution failed: %s", job_id)
             try:
                 self.store.fail_job(job_id, "Execution failed; check server diagnostics", self.worker_id, token)
             except LeaseFencingError:
                 pass
+            try:
+                record_turn_outcome(
+                    turn_status="FAILED",
+                    source_id=row.get("source_id", "unknown") if "row" in locals() and row else "unknown",
+                    duration_sec=time.time() - t0,
+                )
+            except Exception:
+                pass
         finally:
             stopped.set()
             heartbeat_thread.join(timeout=1)
+            try:
+                update_queue_depth(self.store.get_queued_job_count())
+            except Exception:
+                pass
         return job

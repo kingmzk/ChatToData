@@ -644,6 +644,7 @@ def governed_analytics_node(state: GraphState, config: RunnableConfig) -> dict[s
             "protected_evidence_reference": sealed_evidence.package_id,
             "evidence_digest": sealed_evidence.package_digest,
             "safe_display_facts": safe_display_facts,
+            "compiled_sql": services.get("_last_compiled_sql"),
         }
         
     except Exception as exc:

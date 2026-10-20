@@ -1,14 +1,20 @@
 """FastAPI Application factory for Talk2Data enterprise analytics service."""
 from __future__ import annotations
 import os
+import time
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from fastapi.middleware.cors import CORSMiddleware
 from backend.api.routes import router
+from backend.telemetry import (
+    generate_prometheus_metrics,
+    HTTP_REQUESTS_TOTAL,
+    STAGE_DURATION_SECONDS,
+)
 from backend.catalog.store import SemanticCatalogStore
 from backend.context.followup import FollowUpService
 from backend.execution.gateway import GenericSourceGateway
@@ -77,6 +83,44 @@ def create_app(
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def opentelemetry_metrics_middleware(request: Request, call_next):
+        start_time = time.perf_counter()
+        response = await call_next(request)
+        duration = time.perf_counter() - start_time
+
+        path = request.url.path
+        if path.startswith("/api/v1/turns/"):
+            normalized_path = "/api/v1/turns/{id}"
+        elif path.startswith("/api/v1/conversations/"):
+            normalized_path = "/api/v1/conversations/{id}"
+        elif path.startswith("/api/v1/jobs/"):
+            normalized_path = "/api/v1/jobs/{id}"
+        else:
+            normalized_path = path
+
+        try:
+            HTTP_REQUESTS_TOTAL.labels(
+                method=request.method,
+                endpoint=normalized_path,
+                status_code=str(response.status_code),
+            ).inc()
+            STAGE_DURATION_SECONDS.labels(
+                stage=f"http_{request.method.lower()}",
+                status=str(response.status_code),
+            ).observe(duration)
+        except Exception:
+            pass
+        return response
+
+    @app.get("/metrics", tags=["System"], include_in_schema=False)
+    def prometheus_metrics():
+        """Prometheus metrics scrape endpoint for OpenTelemetry / monitoring agents."""
+        return Response(
+            content=generate_prometheus_metrics(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     # Mount API routes
     app.include_router(router)

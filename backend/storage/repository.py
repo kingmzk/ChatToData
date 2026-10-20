@@ -238,6 +238,14 @@ class PersistentApplicationStore:
             raise AuthorizationError("Access denied: You do not have access to this job.")
         return dict(row)
 
+    def get_queued_job_count(self) -> int:
+        """Count jobs currently in QUEUED status."""
+        try:
+            row = self.conn.execute("SELECT COUNT(*) AS count FROM jobs WHERE status = 'QUEUED'").fetchone()
+            return int(row["count"]) if row and "count" in row.keys() else 0
+        except Exception:
+            return 0
+
     def cancel_job_and_turn(self, actor: ApiActor, turn_id: str) -> bool:
         """Cancel an in-flight job and transition turn to CANCELLED."""
         turn = self.get_turn(actor, turn_id)
