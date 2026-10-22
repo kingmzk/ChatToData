@@ -55,6 +55,9 @@ def get_tracer() -> Tracer:
                 "deployment.environment": os.getenv("TALK2DATA_ENV", "development"),
             })
             provider = TracerProvider(resource=resource)
+            if os.getenv("OTEL_CONSOLE_EXPORT", "").lower() in ("true", "1", "yes"):
+                from opentelemetry.sdk.trace.export import ConsoleSpanExporter, SimpleSpanProcessor
+                provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
             trace.set_tracer_provider(provider)
         _tracer = trace.get_tracer("talk2data.engine", service_version)
     except Exception as exc:

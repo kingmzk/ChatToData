@@ -21,6 +21,12 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 
+# Ensure Windows Application Control approved C: site-packages is available for .pyd extensions
+if sys.platform == "win32" and hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix:
+    base_site = str(Path(sys.base_prefix) / "Lib" / "site-packages")
+    if Path(base_site).is_dir() and base_site not in sys.path:
+        sys.path.insert(0, base_site)
+
 
 def ensure_environment() -> dict[str, str]:
     """Ensure environment variables and configuration files exist."""

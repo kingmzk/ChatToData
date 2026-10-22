@@ -53,4 +53,17 @@ def load_runtime():
     if not source_path.is_file():
         raise RuntimeError("Configured source database does not exist")
     conn = sqlite3.connect(source_path.as_uri() + "?mode=ro", uri=True, check_same_thread=False)
-    return sec, catalogs, GenericSourceGateway(conn)
+    gateway = GenericSourceGateway(conn)
+
+    from backend.catalog.extractor import introspect_sqlite_database
+    uploads_dir = (path.parent / "uploads").resolve()
+    if uploads_dir.is_dir():
+        for upload_file in uploads_dir.glob("*.sqlite"):
+            source_id = upload_file.stem
+            if source_id not in getattr(catalogs, "_active_releases", {}):
+                upload_cat, _ = introspect_sqlite_database(upload_file, source_id)
+                catalogs.register_catalog(upload_cat)
+                gateway.register_source(source_id, upload_file)
+                sec.register_tenant_source("tenant_a", source_id)
+
+    return sec, catalogs, gateway

@@ -12,6 +12,14 @@ from pathlib import Path
 
 __version__ = "0.1.0"
 
+# Windows Application Control compatibility:
+# On Windows environments where secondary drives (e.g. D:) block binary DLL/.pyd execution,
+# prioritize the base Python installation's approved site-packages directory.
+if sys.platform == "win32" and hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix:
+    base_site = str(Path(sys.base_prefix) / "Lib" / "site-packages")
+    if Path(base_site).is_dir() and base_site not in sys.path:
+        sys.path.insert(0, base_site)
+
 # Transparent backward compatibility so existing `import talk2data.*` and `python -m talk2data.*` continue to work seamlessly
 class _Talk2DataAliasLoader:
     def __init__(self, target_name: str, real_loader):

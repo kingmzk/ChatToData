@@ -167,14 +167,19 @@ MIGRATIONS = [
 def init_database(db_path_or_conn: str | sqlite3.Connection) -> sqlite3.Connection:
     """Initialize database tables and run versioned migrations in order."""
     if isinstance(db_path_or_conn, str):
-        conn = sqlite3.connect(db_path_or_conn, check_same_thread=False)
+        conn = sqlite3.connect(db_path_or_conn, timeout=15.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
     else:
         conn = db_path_or_conn
         if conn.row_factory is None:
             conn.row_factory = sqlite3.Row
 
-    conn.execute("PRAGMA busy_timeout = 5000")
+    if isinstance(db_path_or_conn, str) and db_path_or_conn != ":memory:":
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+        except Exception:
+            pass
+    conn.execute("PRAGMA busy_timeout = 15000")
     # Migrations are serialized across API and worker startup processes.
     conn.execute("BEGIN IMMEDIATE")
     try:

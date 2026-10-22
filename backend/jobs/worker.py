@@ -137,10 +137,11 @@ class DurableJobWorker:
                 )
             except Exception:
                 pass
-        except Exception:
+        except Exception as exc:
             logger.exception("Job execution failed: %s", job_id)
+            err_msg = f"Execution failed: {exc}" if str(exc) else "Execution failed; check server diagnostics"
             try:
-                self.store.fail_job(job_id, "Execution failed; check server diagnostics", self.worker_id, token)
+                self.store.fail_job(job_id, err_msg, self.worker_id, token)
             except LeaseFencingError:
                 pass
             try:

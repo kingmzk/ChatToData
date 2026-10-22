@@ -124,8 +124,15 @@ USER QUESTION:
                 best_meas_score = score
                 matched_measure = m_id
 
-        if not matched_measure and vocabulary.measures:
-            matched_measure = list(vocabulary.measures.keys())[0]
+        if not matched_measure:
+            # Check if user asked for an explicit metric noun not in the approved catalog
+            m_target = re.search(r'(?:average|avg|total|sum of|mean)\s+(?:order\s+|sales\s+|line\s+)?([a-z_]+)', q)
+            if m_target:
+                candidate = m_target.group(1).strip()
+                if candidate not in ("order", "orders", "sales", "in", "for", "by", "all", "the", "a"):
+                    matched_measure = candidate
+            if not matched_measure and vocabulary.measures:
+                matched_measure = list(vocabulary.measures.keys())[0]
 
         matched_dims = []
         for d_id, d in vocabulary.dimensions.items():
@@ -221,6 +228,9 @@ USER QUESTION:
                 logging.getLogger(__name__).warning("Gemini request failed: %s", last_error.replace(self.api_key, "[REDACTED]")[:1000])
                 if ("503" in last_error or "UNAVAILABLE" in last_error) and attempt < max_retries:
                     time.sleep(2.0 * (attempt + 1))
+                    continue
+                if ("429" in last_error or "RESOURCE_EXHAUSTED" in last_error) and attempt < max_retries:
+                    time.sleep(12.0)
                     continue
                 break
 

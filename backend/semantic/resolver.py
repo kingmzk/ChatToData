@@ -125,7 +125,10 @@ class SemanticResolver:
         period_table = base_table.table_name
         period_column = "period"
         if intent.current_period or intent.comparison_period:
-            p_dim_name = catalog.default_period_dimension or "period"
+            p_dim_name = catalog.default_period_dimension or next(
+                (d.id for d in catalog.dimensions.values() if "year" in d.id.lower()),
+                next((d.id for d in catalog.dimensions.values() if any(k in d.id.lower() for k in ("period", "date"))), "period"),
+            )
             p_dim = catalog.dimensions.get(p_dim_name)
             if p_dim:
                 period_table = p_dim.table
@@ -152,6 +155,15 @@ class SemanticResolver:
                 p_tbl = catalog.tables.get(p_dim.table)
                 if p_tbl and p_tbl not in required_tables:
                     required_tables.append(p_tbl)
+                if p_dim.table != base_table.table_name:
+                    path_edges = self._find_path(catalog, base_table.table_name, p_dim.table)
+                    for edge in path_edges:
+                        if edge not in join_edges:
+                            join_edges.append(edge)
+                        for tbl_name in (edge.from_table, edge.to_table):
+                            tbl = catalog.tables.get(tbl_name)
+                            if tbl and tbl not in required_tables:
+                                required_tables.append(tbl)
 
         # Disclose scope & allocation semantics in assumptions
         assumptions = list(intent.assumptions)

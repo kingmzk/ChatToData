@@ -120,6 +120,8 @@ class GenericSourceGateway:
             else:
                 raise GatewayExecutionError("Unsupported or uninitialized database connection.")
         except Exception as exc:
+            db_list = conn.execute("PRAGMA database_list").fetchall() if isinstance(conn, sqlite3.Connection) else "Not SQLite"
+            print(f"[Gateway Debug Error] exc: {exc} | source_id: {source_id} | db_list: {db_list} | sql: {package.sql}")
             raise GatewayExecutionError(f"Database execution error: {exc}") from exc
         finally:
             if isinstance(conn, sqlite3.Connection):

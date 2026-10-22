@@ -1,0 +1,12 @@
+apiVersion: 1
+
+providers:
+  - name: 'Talk2Data Dashboards'
+    orgId: 1
+    folder: 'Talk2Data'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    allowUiUpdates: true
+    options:
+      path: /var/lib/grafana/dashboards

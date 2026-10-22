@@ -23,6 +23,7 @@ from backend.jobs.worker import DurableJobWorker
 from backend.lifecycle.session import ConversationLifecycleManager
 from backend.security.auth import SecurityRuntime
 from backend.storage.repository import PersistentApplicationStore
+from backend.config import get_db_path
 
 
 def create_app(
@@ -46,7 +47,7 @@ def create_app(
     # Initialize components if not provided
     sec = security or SecurityRuntime()
     cat_store = catalogs or SemanticCatalogStore()
-    app_store = store or PersistentApplicationStore()
+    app_store = store or PersistentApplicationStore(get_db_path())
 
     if manager is None:
         gateway = configured_gateway or GenericSourceGateway()
@@ -65,7 +66,15 @@ def create_app(
     # Attach state
     app_store.security = sec
     app_store.catalogs = cat_store
-    app.state.run_embedded_worker = manager is not None
+    embedded_env = os.getenv("TALK2DATA_EMBEDDED_WORKER")
+    if embedded_env is not None:
+        app.state.run_embedded_worker = embedded_env.lower() in ("true", "1", "yes")
+    elif store is None:
+        # Default for uvicorn standalone startup: run embedded worker so turns execute immediately
+        app.state.run_embedded_worker = True
+    else:
+        # Custom store injected (e.g. standalone worker test without embedded execution)
+        app.state.run_embedded_worker = manager is not None
     app.state.security_runtime = sec
     app.state.catalog_store = cat_store
     app.state.store = app_store
