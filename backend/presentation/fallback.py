@@ -33,6 +33,11 @@ class RenderedAnswerView:
 class DeterministicPresentationFallback:
     """Renders answers strictly from sealed evidence packages with zero raw row exposure."""
 
+    @staticmethod
+    def _metric_label(calculation_type: str, metric: str) -> str:
+        prefix = calculation_type.title()
+        return metric if metric.lower().startswith(prefix.lower()) else f"{prefix} {metric}"
+
     @traced_stage('answer_presentation')
     def render(self, evidence: SealedEvidencePackage, sql_query: Optional[str] = None) -> RenderedAnswerView:
         """Deterministically render narrative, KPI cards, and data table from sealed facts."""
@@ -86,7 +91,7 @@ class DeterministicPresentationFallback:
 
             kpi_cards.append(
                 RenderedKpiCard(
-                    title=f"{total_fact.calculation_type.title()} {total_fact.metric}",
+                    title=self._metric_label(total_fact.calculation_type, total_fact.metric),
                     value=val_str,
                     unit=total_fact.unit,
                     period=total_fact.period,
@@ -109,18 +114,25 @@ class DeterministicPresentationFallback:
                 f"{top_dim_val} was the highest contributor to growth{pct_str}."
             )
         elif total_fact:
+            period_str = f"for period {total_fact.period}" if total_fact.period else "across all periods"
             comp_p_str = f" compared to {delta_fact.comparison_period}" if (delta_fact and delta_fact.comparison_period) else ""
             if total_fact.calculation_type == "COMPARISON" or (delta_str and growth_str):
                 summary_sentences.append(
-                    f"{total_fact.metric} for period {total_fact.period} was {val_str} {total_fact.unit or ''}{comp_p_str} (change: {delta_str}, growth: {growth_str})."
+                    f"{total_fact.metric} {period_str} was {val_str} {total_fact.unit or ''}{comp_p_str} (change: {delta_str}, growth: {growth_str})."
                 )
             else:
                 summary_sentences.append(
-                    f"{total_fact.calculation_type.title()} {total_fact.metric} for period {total_fact.period or 'All'} was {val_str} {total_fact.unit or ''}."
+                    f"{self._metric_label(total_fact.calculation_type, total_fact.metric)} {period_str} was {val_str} {total_fact.unit or ''}."
                 )
 
         if not total_fact and any(f.dimension_values for f in facts) and not any_suppressed:
             summary_sentences.append(f"{facts[0].metric} results are shown by category in the table; group values are not summed into an overall metric.")
+
+        # Explain allocation method in narrative when an allocation policy applies
+        alloc_notes = [a for a in all_assumptions if "allocated across child items" in a.lower() or "allocation policy" in a.lower()]
+        for note in alloc_notes:
+            if note not in summary_sentences:
+                summary_sentences.append(note)
 
         # Build Slices Table (grouped by slice dimension values)
         dim_slice_map: dict[tuple, dict[str, Any]] = {}

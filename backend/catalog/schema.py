@@ -99,6 +99,8 @@ class DimensionDefinition:
     sensitivity: str = "INTERNAL"
     required_role: Optional[str] = None
     allowed_operators: tuple[str, ...] = ("=", "!=", "IN", ">", "<", ">=", "<=", "BETWEEN")
+    role: Optional[str] = None
+    join_path: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)

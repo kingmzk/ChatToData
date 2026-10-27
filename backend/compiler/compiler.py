@@ -4,7 +4,15 @@ from backend.observability import traced_stage
 import re
 from typing import Any
 from backend.catalog.schema import JoinCardinality, ApprovedJoinEdge
-from backend.compiler.ast import PhysicalQueryPackage
+from backend.compiler.ast import (
+    PhysicalQueryPackage,
+    SelectQuery,
+    JoinClause,
+    OrderByItem,
+    RawExpr,
+    BaseSQLRenderer,
+    SQLiteRenderer,
+)
 from backend.semantic.plan import ResolvedSemanticPlan
 
 
@@ -31,10 +39,26 @@ class GovernedQueryCompiler:
         edges: tuple[ApprovedJoinEdge, ...] | list[ApprovedJoinEdge],
         start_table: str,
         target_table: str,
+        via_path: tuple[str, ...] = (),
     ) -> list[ApprovedJoinEdge]:
-        """Find shortest sequence of approved join edges connecting start_table and target_table."""
+        """Find approved join edges connecting start_table and target_table, respecting via_path if declared."""
         if start_table == target_table:
             return []
+
+        if via_path:
+            full_seq = list(via_path)
+            prefix = self._find_path(edges, start_table, full_seq[0]) if full_seq[0] != start_table else []
+            res_edges = list(prefix)
+            for i in range(len(full_seq) - 1):
+                t1, t2 = full_seq[i], full_seq[i + 1]
+                step_edge = next(
+                    (e for e in edges if (e.from_table == t1 and e.to_table == t2) or (e.from_table == t2 and e.to_table == t1)),
+                    None,
+                )
+                if step_edge and step_edge not in res_edges:
+                    res_edges.append(step_edge)
+            if res_edges:
+                return res_edges
 
         adj: dict[str, list[tuple[str, ApprovedJoinEdge]]] = {}
         for edge in edges:
@@ -315,20 +339,48 @@ class GovernedQueryCompiler:
             param_idx += 1
             where_clauses.append(f"{target_period_table}.{target_period_col} = :{p_period}")
 
-        # Construct final SQL
-        sql_lines = [
-            f"SELECT {', '.join(select_parts)}",
-            from_clause,
-        ]
-        if join_clauses:
-            sql_lines.extend(join_clauses)
-        sql_lines.append(f"WHERE {' AND '.join(where_clauses)}")
+        # Construct SelectQuery AST
+        ast_select_items = [RawExpr(p) for p in select_parts]
+        ast_joins = []
+        for j in join_clauses:
+            parts = j.split(" ON ", 1)
+            prefix_parts = parts[0].split()
+            j_type = prefix_parts[0]
+            j_table = prefix_parts[2]
+            ast_joins.append(JoinClause(join_type=j_type, table=j_table, condition=RawExpr(parts[1])))
 
-        if group_by_parts:
-            sql_lines.append(f"GROUP BY {', '.join(group_by_parts)}")
-            sql_lines.append(f"ORDER BY {', '.join(group_by_parts)}")
+        ast_where = [RawExpr(w) for w in where_clauses]
+        ast_group_by = [RawExpr(g) for g in group_by_parts]
 
-        compiled_sql = "\n".join(sql_lines)
+        # Determine ORDER BY (Ranking by metric vs standard dimension order)
+        ast_order_by = []
+        if getattr(plan, "order_by_metric", False):
+            direction = "DESC" if getattr(plan, "order_direction", "DESC").upper() == "DESC" else "ASC"
+            ast_order_by.append(OrderByItem(expr=RawExpr("metric_value"), direction=direction))
+        elif group_by_parts:
+            for g in group_by_parts:
+                ast_order_by.append(OrderByItem(expr=RawExpr(g), direction="ASC"))
+
+        # Determine LIMIT
+        ast_limit = None
+        if getattr(plan, "limit", None) is not None:
+            p_limit = f"p_limit_{param_idx}"
+            parameters[p_limit] = int(plan.limit)
+            param_idx += 1
+            ast_limit = f":{p_limit}"
+
+        query_ast = SelectQuery(
+            select_items=tuple(ast_select_items),
+            from_table=base_tbl.table_name,
+            joins=tuple(ast_joins),
+            where_predicates=tuple(ast_where),
+            group_by=tuple(ast_group_by),
+            order_by=tuple(ast_order_by),
+            limit=ast_limit,
+        )
+
+        renderer = self._get_renderer(self.dialect)
+        compiled_sql = renderer.render(query_ast)
 
         # Sanity check: Ensure no forbidden keywords or multi-statements injected
         self._assert_read_only(compiled_sql)
@@ -340,6 +392,12 @@ class GovernedQueryCompiler:
             timeout_seconds=self.timeout_seconds,
             is_aggregate=True,
         )
+
+    def _get_renderer(self, dialect: str) -> BaseSQLRenderer:
+        """Get dialect-specific AST SQL renderer."""
+        if dialect == "sqlite":
+            return SQLiteRenderer()
+        return SQLiteRenderer()
 
     def _validate_identifier(self, ident: str) -> None:
         """Allowlist identifier check."""

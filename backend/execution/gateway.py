@@ -18,6 +18,24 @@ class GatewayExecutionError(Exception):
 from decimal import Decimal, InvalidOperation
 
 
+def _decimal_div(value: Any, divisor: Any) -> Optional[str]:
+    """Exact decimal division returning high-precision decimal string."""
+    if value is None or divisor is None:
+        return None
+    val_str = str(value).strip()
+    div_str = str(divisor).strip()
+    if not val_str or not div_str:
+        return None
+    try:
+        d_val = Decimal(val_str)
+        d_div = Decimal(div_str)
+        if d_div == Decimal("0"):
+            return None
+        return str(d_val / d_div)
+    except (InvalidOperation, ValueError):
+        return None
+
+
 class DecimalSumAggregate:
     """Exact decimal sum aggregate for SQLite, preventing IEEE-754 drift."""
     def __init__(self):
@@ -90,9 +108,11 @@ class GenericSourceGateway:
     def _register_decimal_aggregates(conn: sqlite3.Connection) -> None:
         """Register exact decimal aggregates on SQLite connection."""
         try:
-            conn.create_function("DECIMAL_DIV", 2, lambda value, divisor: str(Decimal(str(value)) / Decimal(str(divisor))))
+            conn.create_function("DECIMAL_DIV", 2, _decimal_div)
             conn.create_aggregate("SUM", 1, DecimalSumAggregate)
+            conn.create_aggregate("DECIMAL_SUM", 1, DecimalSumAggregate)
             conn.create_aggregate("AVG", 1, DecimalAvgAggregate)
+            conn.create_aggregate("DECIMAL_AVG", 1, DecimalAvgAggregate)
         except Exception:
             pass
 

@@ -16,10 +16,32 @@ class SemanticResolutionError(Exception):
 class SemanticResolver:
     """Governed resolver creating trusted ResolvedSemanticPlan intermediate representation."""
 
-    def _find_path(self, catalog: SemanticCatalog, start_table: str, target_table: str) -> list[ApprovedJoinEdge]:
-        """Find shortest sequence of approved join edges connecting start_table and target_table."""
+    def _find_path(
+        self,
+        catalog: SemanticCatalog,
+        start_table: str,
+        target_table: str,
+        via_path: tuple[str, ...] = (),
+    ) -> list[ApprovedJoinEdge]:
+        """Find approved join edges connecting start_table and target_table, respecting explicit via_path if declared."""
         if start_table == target_table:
             return []
+
+        if via_path:
+            full_seq = list(via_path)
+            prefix = self._find_path(catalog, start_table, full_seq[0]) if full_seq[0] != start_table else []
+            edges = list(prefix)
+            for i in range(len(full_seq) - 1):
+                t1, t2 = full_seq[i], full_seq[i + 1]
+                step_edge = next(
+                    (e for e in catalog.joins if (e.from_table == t1 and e.to_table == t2) or (e.from_table == t2 and e.to_table == t1)),
+                    None,
+                )
+                if not step_edge:
+                    raise SemanticResolutionError(f"No approved join edge between '{t1}' and '{t2}' in declared join_path.")
+                if step_edge not in edges:
+                    edges.append(step_edge)
+            return edges
 
         adj: dict[str, list[tuple[str, ApprovedJoinEdge]]] = {}
         for edge in catalog.joins:
@@ -81,7 +103,7 @@ class SemanticResolver:
 
         for dim in resolved_dims:
             if dim.table != base_table.table_name:
-                path_edges = self._find_path(catalog, base_table.table_name, dim.table)
+                path_edges = self._find_path(catalog, base_table.table_name, dim.table, via_path=getattr(dim, "join_path", ()))
                 for edge in path_edges:
                     if edge not in join_edges:
                         join_edges.append(edge)
@@ -112,7 +134,7 @@ class SemanticResolver:
         for f in intent.filters:
             f_dim = catalog.dimensions.get(f.dimension)
             if f_dim and f_dim.table != base_table.table_name:
-                path_edges = self._find_path(catalog, base_table.table_name, f_dim.table)
+                path_edges = self._find_path(catalog, base_table.table_name, f_dim.table, via_path=getattr(f_dim, "join_path", ()))
                 for edge in path_edges:
                     if edge not in join_edges:
                         join_edges.append(edge)
@@ -168,13 +190,18 @@ class SemanticResolver:
         # Disclose scope & allocation semantics in assumptions
         assumptions = list(intent.assumptions)
         if fan_out_risk and measure_def.allocation_policy:
+            policy_desc = (
+                "equal-split allocation: order total divided evenly across its matched child items"
+                if measure_def.allocation_policy == "EXPLICIT_EQUAL_SPLIT"
+                else f"catalog policy '{measure_def.allocation_policy}'"
+            )
             if measure_def.unmatched_parent_behavior == "UNALLOCATED":
                 assumptions.append(
-                    f"Scope disclosure: Parent metric '{measure_def.name}' allocated across child items using explicit catalog policy '{measure_def.allocation_policy}'. Orders without line items are grouped under 'Unallocated'."
+                    f"Scope disclosure: Parent metric '{measure_def.name}' allocated across child items using explicit catalog policy '{measure_def.allocation_policy}' ({policy_desc}). Orders without line items are grouped under 'Unallocated'."
                 )
             else:
                 assumptions.append(
-                    f"Scope disclosure: Parent metric '{measure_def.name}' allocated across child items using explicit catalog policy '{measure_def.allocation_policy}'. Orders without line items are excluded."
+                    f"Scope disclosure: Parent metric '{measure_def.name}' allocated across child items using explicit catalog policy '{measure_def.allocation_policy}' ({policy_desc}). Orders without line items are excluded."
                 )
 
         # Grouping columns
@@ -224,5 +251,8 @@ class SemanticResolver:
             bounds=intent.bounds,
             time_series_policy=catalog.time_series_policies.get(intent.measure) if intent.measure else None,
             scenario_model_def=catalog.scenario_models.get(intent.scenario_model) if intent.scenario_model else None,
+            limit=intent.limit,
+            order_by_metric=bool(intent.order_by_metric) if intent.order_by_metric is not None else False,
+            order_direction=intent.order_direction or "DESC",
         )
 

@@ -52,3 +52,8 @@ class ResolvedSemanticPlan:
     scenario_model_def: Optional[ScenarioModelDefinition] = None
     filter_dimensions: tuple[DimensionDefinition, ...] = ()
 
+    # Ranking and Pagination
+    limit: Optional[int] = None
+    order_by_metric: bool = False
+    order_direction: str = "DESC"
+

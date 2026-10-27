@@ -442,7 +442,7 @@ class ConversationLifecycleManager:
         if self.security.detect_cross_tenant_injection(question):
             turn.transition_to(
                 TurnStatus.DECLINED,
-                reason="Security policy violation: cross-tenant access or restriction bypass attempt.",
+                reason="Security policy violation: the request contains a prohibited instruction (tenant-boundary bypass, restriction override, or data-modifying SQL).",
             )
             self._record_terminal_closure(turn, "DECLINED", "security_policy_violation")
             return turn, None
@@ -773,6 +773,7 @@ class ConversationLifecycleManager:
                 pkg_comp = self.compiler.compile(comp_plan)
                 rows_comp = self.gateway.execute_package(pkg_comp, source_id=target_source_id)
                 comp_facts = self.kernel.analyze(plan=comp_plan, rows=rows_comp, pin=pin)
+                compiled_sql = f"-- Current Period ({plan.current_period}):\n{pkg_curr.sql}\n\n-- Comparison Period ({plan.comparison_period}):\n{pkg_comp.sql}"
 
                 if plan.dimensions:
                     current_by_key = {tuple(sorted(f.dimension_values.items())): f for f in curr_facts if f.dimension_values}
@@ -803,6 +804,7 @@ class ConversationLifecycleManager:
                 pkg_comp = self.compiler.compile(comp_plan)
                 rows_comp = self.gateway.execute_package(pkg_comp, source_id=target_source_id)
                 comp_facts = self.kernel.analyze(plan=comp_plan, rows=rows_comp, pin=pin)
+                compiled_sql = f"-- Current Period ({plan.current_period}):\n{pkg_curr.sql}\n\n-- Comparison Period ({plan.comparison_period}):\n{pkg_comp.sql}"
 
                 raw_facts = self.kernel.compute_growth_contribution(curr_facts, comp_facts, pin)
 

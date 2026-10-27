@@ -89,7 +89,7 @@ class IntentValidator:
                 source_id=vocabulary.source_id,
                 semantic_release_id=vocabulary.release_id,
                 ambiguity_code="metric-disambiguation",
-                question_prompt="Which metric would you like to analyze?",
+                question_prompt="I couldn't match your question to an available metric. Which of these metrics would you like to analyze?",
                 options=options,
             )
             return IntentValidationResult(status="CLARIFY", clarification_request=clar_req)
@@ -493,5 +493,8 @@ class IntentValidator:
             target_value=intent.target_value,
             adjustable_driver=intent.adjustable_driver,
             bounds=intent.bounds,
+            limit=intent.limit if (intent.limit is None or intent.limit > 0) else None,
+            order_by_metric=intent.order_by_metric,
+            order_direction=intent.order_direction,
         )
         return IntentValidationResult(status="VALID", validated_intent=validated)

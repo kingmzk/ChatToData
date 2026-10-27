@@ -5,6 +5,7 @@ from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any
 from backend.catalog.pinning import SemanticSnapshotPin
+from backend.catalog.schema import JoinCardinality, ApprovedJoinEdge
 from backend.domain.facts import ProtectedFact
 from backend.intent.schema import AnalysisFamily
 from backend.semantic.plan import ResolvedSemanticPlan
@@ -114,6 +115,10 @@ class DeterministicAnalysisKernel:
         # Non-additive grouped values cannot be summed into an overall metric.
         if plan.measure.aggregation.value in ("AVG", "COUNT_DISTINCT", "MIN", "MAX"):
             return slice_facts
+
+        if self._slices_may_overlap(plan):
+            note = "Groups overlap because a record can belong to several values of the grouping dimension; values are not summed into an overall total."
+            return [replace(f, limitations=[*f.limitations, note]) for f in slice_facts]
 
         # Add total fact
         facts.append(
@@ -543,3 +548,78 @@ class DeterministicAnalysisKernel:
             replace(f, semantic_release=pin.release_id, lineage=lineage, unit=plan.units)
             for f in gs_res.facts
         ]
+
+    @staticmethod
+    def _find_path(edges: tuple[ApprovedJoinEdge, ...] | list[ApprovedJoinEdge], start_table: str, target_table: str, via_path: tuple[str, ...] = ()) -> list[tuple[str, str, ApprovedJoinEdge]]:
+        """Find sequence of (source, target, edge) connecting start_table and target_table."""
+        if start_table == target_table:
+            return []
+
+        if via_path:
+            full_seq = list(via_path)
+            prefix = DeterministicAnalysisKernel._find_path(edges, start_table, full_seq[0]) if full_seq[0] != start_table else []
+            res = list(prefix)
+            for i in range(len(full_seq) - 1):
+                t1, t2 = full_seq[i], full_seq[i + 1]
+                step_edge = next(
+                    (e for e in edges if (e.from_table == t1 and e.to_table == t2) or (e.from_table == t2 and e.to_table == t1)),
+                    None,
+                )
+                if step_edge:
+                    res.append((t1, t2, step_edge))
+            if res:
+                return res
+
+        adj: dict[str, list[tuple[str, ApprovedJoinEdge]]] = {}
+        for edge in edges:
+            adj.setdefault(edge.from_table, []).append((edge.to_table, edge))
+            adj.setdefault(edge.to_table, []).append((edge.from_table, edge))
+
+        queue: list[tuple[str, list[tuple[str, str, ApprovedJoinEdge]]]] = [(start_table, [])]
+        visited = {start_table}
+
+        while queue:
+            curr, path = queue.pop(0)
+            if curr == target_table:
+                return path
+            for nxt, edge in adj.get(curr, []):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append((nxt, path + [(curr, nxt, edge)]))
+
+        return []
+
+    def _slices_may_overlap(self, plan: ResolvedSemanticPlan) -> bool:
+        """Determine if grouping slices can overlap because a base record can belong to multiple dimension values."""
+        if not plan.dimensions or not plan.join_edges:
+            return False
+
+        base_table = plan.base_table.table_name
+
+        for dim in plan.dimensions:
+            if dim.table == base_table:
+                continue
+
+            path = self._find_path(plan.join_edges, base_table, dim.table, via_path=getattr(dim, "join_path", ()))
+            if not path:
+                continue
+
+            for idx, (source, target, edge) in enumerate(path):
+                if edge.from_table == source and edge.to_table == target:
+                    cardinality = edge.cardinality
+                else:
+                    if edge.cardinality == JoinCardinality.ONE_TO_MANY:
+                        cardinality = JoinCardinality.MANY_TO_ONE
+                    elif edge.cardinality == JoinCardinality.MANY_TO_ONE:
+                        cardinality = JoinCardinality.ONE_TO_MANY
+                    else:
+                        cardinality = edge.cardinality
+
+                if cardinality == JoinCardinality.ONE_TO_MANY:
+                    # Allocated child edge directly from base table does not cause overlapping slices
+                    if idx == 0 and source == base_table and plan.allocation_policy:
+                        continue
+                    return True
+
+        return False
+

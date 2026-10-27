@@ -137,6 +137,20 @@ class IntentParser:
                     raw_vals = [raw_vals]
                 filters.append(FilterSpec(dimension=dim, operator=op, values=tuple(raw_vals)))
 
+        limit_val = data.get("limit")
+        try:
+            limit = int(limit_val) if limit_val is not None else None
+        except (ValueError, TypeError):
+            limit = None
+
+        order_by_metric = data.get("order_by_metric")
+        if order_by_metric is None:
+            if limit is not None or str(data.get("order_by", "")).lower() in ("metric", "measure", "value"):
+                order_by_metric = True
+
+        order_dir_raw = str(data.get("order_direction") or data.get("direction") or "DESC").upper()
+        order_direction = "ASC" if order_dir_raw == "ASC" else "DESC"
+
         return StructuredIntent(
             measure=data.get("measure"),
             family=family,
@@ -153,4 +167,7 @@ class IntentParser:
             target_value=data.get("target_value"),
             adjustable_driver=data.get("adjustable_driver"),
             bounds=bounds,
+            limit=limit,
+            order_by_metric=order_by_metric,
+            order_direction=order_direction,
         )

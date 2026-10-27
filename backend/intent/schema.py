@@ -52,3 +52,8 @@ class StructuredIntent:
     target_value: Optional[Decimal] = None
     adjustable_driver: Optional[str] = None
     bounds: Optional[tuple[Decimal, Decimal]] = None
+
+    # Ranking and Pagination
+    limit: Optional[int] = None
+    order_by_metric: Optional[bool] = None
+    order_direction: str = "DESC"
