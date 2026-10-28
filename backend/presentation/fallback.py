@@ -124,6 +124,8 @@ class DeterministicPresentationFallback:
                 summary_sentences.append(
                     f"{self._metric_label(total_fact.calculation_type, total_fact.metric)} {period_str} was {val_str} {total_fact.unit or ''}."
                 )
+                if any("0 matching records" in a.lower() for a in all_assumptions):
+                    summary_sentences.append("Note: Query returned 0 matching records for the requested scope.")
 
         if not total_fact and any(f.dimension_values for f in facts) and not any_suppressed:
             summary_sentences.append(f"{facts[0].metric} results are shown by category in the table; group values are not summed into an overall metric.")

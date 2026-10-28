@@ -58,6 +58,68 @@ def _infer_unit(col_name: str) -> str:
     return "Numeric"
 
 
+NON_MEASURE_KEYWORDS = {
+    "year", "yr", "month", "day", "date", "quarter", "qtr", "week",
+    "zip", "postal", "code", "phone", "fax", "status", "type", "rank",
+    "priority", "level", "seq", "sequence", "index", "idx", "flag",
+    "indicator", "version", "num", "number", "id"
+}
+
+
+def _matches_table(entity: str, table_name: str) -> bool:
+    """Check if an entity candidate name (from an FK column like variant_id) matches a table name."""
+    e = entity.lower().strip()
+    t = table_name.lower().strip()
+    if t == e:
+        return True
+    if (
+        t == f"{e}s"
+        or t == f"{e}es"
+        or (e.endswith("y") and t == f"{e[:-1]}ies")
+        or t.rstrip("s") == e
+    ):
+        return True
+    for prefix in ("commerce_", "tbl_", "app_", "dim_", "fact_", "core_"):
+        if t.startswith(prefix):
+            clean_t = t[len(prefix):]
+            if clean_t == e or clean_t == f"{e}s" or clean_t == f"{e}es" or clean_t.rstrip("s") == e:
+                return True
+    if t.endswith(f"_{e}") or t.endswith(f"_{e}s") or t.endswith(f"_{e}es"):
+        return True
+    if e.endswith(f"_{t}") or e.endswith(f"_{t.rstrip('s')}"):
+        return True
+    return False
+
+
+def ensure_tenant_columns(db_path: Path, default_tenant_id: str = "tenant_a") -> list[str]:
+    """Ensure that all physical user tables in SQLite database have a tenant isolation column.
+    
+    If a table lacks a tenant column, injects tenant_id with default_tenant_id.
+    """
+    if not db_path.exists():
+        raise FileNotFoundError(f"Database file not found: {db_path}")
+
+    conn = sqlite3.connect(db_path.resolve().as_posix())
+    cur = conn.cursor()
+    cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+    tables = [r[0] for r in cur.fetchall()]
+
+    modified_tables = []
+    for tbl in tables:
+        cols_info = cur.execute(f"PRAGMA table_info('{tbl}')").fetchall()
+        col_names = {c[1].lower() for c in cols_info}
+        tenant_col = any(c in col_names for c in ("tenant_id", "tenant", "org_id", "company_id", "account_id"))
+        if not tenant_col:
+            clean_tid = default_tenant_id.replace("'", "''")
+            cur.execute(f'ALTER TABLE "{tbl}" ADD COLUMN tenant_id TEXT DEFAULT \'{clean_tid}\'')
+            cur.execute(f'UPDATE "{tbl}" SET tenant_id = ? WHERE tenant_id IS NULL', (default_tenant_id,))
+            modified_tables.append(tbl)
+
+    conn.commit()
+    conn.close()
+    return modified_tables
+
+
 def introspect_sqlite_database(
     db_path: Path,
     source_id: str,
@@ -204,16 +266,10 @@ def introspect_sqlite_database(
             if not col_name.endswith("_id") or col_name in ("tenant_id", "id"):
                 continue
             entity_cand = col_name[:-3]
-            # Match against target table names (e.g. customer -> customers, customer, countries, etc.)
+            # Match against target table names using enhanced morphological matching
             target_candidates = [
                 t for t in raw_tables
-                if t != tbl and (
-                    t == entity_cand or
-                    t == f"{entity_cand}s" or
-                    t == f"{entity_cand}es" or
-                    (entity_cand.endswith("y") and t == f"{entity_cand[:-1]}ies") or
-                    t.rstrip("s") == entity_cand
-                )
+                if t != tbl and _matches_table(entity_cand, t)
             ]
             for target_table in target_candidates:
                 target_pks = tables_meta[target_table]["primary_key"]
@@ -346,16 +402,43 @@ def introspect_sqlite_database(
     # 4. Extract Measures
     measures: dict[str, MeasureDefinition] = {}
     measure_manifest: list[dict[str, Any]] = []
-    allowed_dim_ids = tuple(dimensions.keys())
+
+    # Build forward reachability graph (parent dimension tables reachable via N:1 or 1:1)
+    forward_edges: dict[str, set[str]] = {}
+    for edge in approved_joins:
+        if edge.cardinality in (JoinCardinality.MANY_TO_ONE, JoinCardinality.ONE_TO_ONE):
+            forward_edges.setdefault(edge.from_table, set()).add(edge.to_table)
+
+    def get_reachable_tables(start_tbl: str) -> set[str]:
+        visited = {start_tbl}
+        q = [start_tbl]
+        while q:
+            curr = q.pop(0)
+            for nxt in forward_edges.get(curr, set()):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    q.append(nxt)
+        return visited
 
     for tbl, cols in all_table_columns.items():
+        allowed_tables = get_reachable_tables(tbl)
+        allowed_dim_ids = tuple(d_id for d_id, d in dimensions.items() if d.table in allowed_tables)
+
         for col_name, sql_type in cols.items():
             clean_type = (sql_type or "").upper().split("(")[0].strip()
-            # If numeric and not a primary or foreign key ID
-            is_numeric = clean_type in NUMERIC_TYPES or any(k in col_name.lower() for k in ("amount", "price", "revenue", "sales", "cost", "total", "rate", "qty", "quantity"))
-            is_id_column = col_name.endswith("_id") or col_name == "id" or col_name == "tenant_id"
+            col_lower = col_name.lower()
 
-            if is_numeric and not is_id_column:
+            is_non_measure = (
+                col_lower in NON_MEASURE_KEYWORDS
+                or any(col_lower.endswith(s) for s in ("_code", "_num", "_number", "_idx", "_seq", "_flag", "_status", "_year", "_month", "_day"))
+            )
+            is_id_column = col_lower.endswith("_id") or col_lower in ("id", "tenant_id")
+            is_numeric = (
+                clean_type in NUMERIC_TYPES
+                or any(k in col_lower for k in ("amount", "price", "revenue", "sales", "cost", "total", "rate", "qty", "quantity"))
+            )
+
+            if is_numeric and not is_id_column and not is_non_measure:
                 meas_id = f"{tbl}_{col_name}"
                 unit = _infer_unit(col_name)
                 meas_def = MeasureDefinition(
@@ -377,6 +460,64 @@ def introspect_sqlite_database(
                     "column": col_name,
                     "unit": unit,
                     "aggregation": "SUM",
+                })
+
+                # Check for business revenue alias if on a transaction/sales/order table
+                if (
+                    any(k in tbl.lower() for k in ("order", "sale", "invoice", "trans", "payment"))
+                    and any(k in col_lower for k in ("amount", "total", "sales", "revenue"))
+                    and "revenue" not in measures
+                ):
+                    rev_def = MeasureDefinition(
+                        id="revenue",
+                        name="Total Revenue",
+                        description=f"Total monetary revenue from {tbl}.{col_name}",
+                        table=tbl,
+                        column=col_name,
+                        aggregation=AggregationType.SUM,
+                        base_grain=f"{tbl}_grain",
+                        unit="USD",
+                        allowed_dimensions=allowed_dim_ids,
+                    )
+                    measures["revenue"] = rev_def
+                    measure_manifest.append({
+                        "id": "revenue",
+                        "name": rev_def.name,
+                        "table": tbl,
+                        "column": col_name,
+                        "unit": "USD",
+                        "aggregation": "SUM",
+                    })
+
+    # Add entity count measures (COUNT_DISTINCT on single-column PKs for business tables)
+    for tbl in raw_tables:
+        pks = tables_meta[tbl]["primary_key"]
+        if pks and len(pks) == 1:
+            pk_col = pks[0]
+            count_meas_id = f"{tbl}_count"
+            if count_meas_id not in measures:
+                allowed_tables = get_reachable_tables(tbl)
+                allowed_dim_ids = tuple(d_id for d_id, d in dimensions.items() if d.table in allowed_tables)
+                clean_name = tbl.rstrip("s").replace("_", " ").title()
+                count_def = MeasureDefinition(
+                    id=count_meas_id,
+                    name=f"{tbl.replace('_', ' ').title()} Count",
+                    description=f"Distinct count of {tbl}",
+                    table=tbl,
+                    column=pk_col,
+                    aggregation=AggregationType.COUNT_DISTINCT,
+                    base_grain=f"{tbl}_grain",
+                    unit=f"{clean_name}s",
+                    allowed_dimensions=allowed_dim_ids,
+                )
+                measures[count_meas_id] = count_def
+                measure_manifest.append({
+                    "id": count_meas_id,
+                    "name": count_def.name,
+                    "table": tbl,
+                    "column": pk_col,
+                    "unit": count_def.unit,
+                    "aggregation": "COUNT_DISTINCT",
                 })
 
     # If no numeric column was found, provide a default row count measure

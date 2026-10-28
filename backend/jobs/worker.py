@@ -118,12 +118,14 @@ class DurableJobWorker:
         except LeaseFencingError:
             self.manager._answers.pop(turn_id, None)
             self.manager._evidence_packages.pop(turn_id, None)
-        except AuthorizationError:
+        except AuthorizationError as auth_err:
+            logger.warning("Authorization rejected for job %s, turn %s: %s", job_id, turn_id, auth_err)
+            decline_msg = f"Current permissions do not allow this analysis: {auth_err}" if str(auth_err).strip() else "Current permissions do not allow this analysis"
             with self.store.transaction():
                 try:
                     self.store.assert_job_ownership(job_id, self.worker_id, token)
                     turn = self.store.restore_execution_state(actor, turn_id, self.manager)
-                    turn.transition_to(TurnStatus.DECLINED, "Current permissions do not allow this analysis")
+                    turn.transition_to(TurnStatus.DECLINED, decline_msg)
                     self.store.save_turn(turn, actor, job_id, self.worker_id, token)
                     self.store.complete_job(job_id, self.worker_id, token)
                 except LeaseFencingError:
@@ -133,7 +135,7 @@ class DurableJobWorker:
                     turn_status="DECLINED",
                     source_id=row.get("source_id", "unknown") if "row" in locals() and row else "unknown",
                     duration_sec=time.time() - t0,
-                    decline_reason="Current permissions do not allow this analysis",
+                    decline_reason=decline_msg,
                 )
             except Exception:
                 pass

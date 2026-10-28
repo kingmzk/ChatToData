@@ -33,6 +33,7 @@ RULES:
 5a. Set dimensions to [] unless the user explicitly asks for a breakdown ("by", "per", "each") or a trend. A year mentioned as a period is NOT a request to group by year. "Across all years" requests one total, not a year breakdown.
 5b. Put requested periods in current_period/comparison_period. Do not duplicate them in filters. Filters are for additional explicitly requested restrictions, such as region or customer segment.
 5c. When the question explicitly requests an average or mean, use family AVERAGE and the approved AVG measure, not family TOTAL. Other requests for a pre-defined average metric may also use AVERAGE.
+5d. NEVER add numeric or metric columns (e.g. 'amount', 'price', 'total', 'revenue') to "dimensions". For simple aggregate questions (e.g. 'total order amount'), "dimensions" MUST be an empty list [].
 6. Return ONLY a valid JSON object matching this schema:
 {
   "measure": "<measure_id or null>",
@@ -81,9 +82,14 @@ RULES:
             f"- {m.id}: {m.name} ({m.description}) [Aggregation: {m.aggregation.value}; Allowed families: {', '.join(m.allowed_families)}; Allowed dimensions: {', '.join(m.allowed_dimensions)}]"
             for m in vocabulary.measures.values()
         ]
+        all_allowed_dim_ids = set()
+        for m in vocabulary.measures.values():
+            all_allowed_dim_ids.update(m.allowed_dimensions)
+
         dimensions_info = [
             f"- {d.id}: {d.name} (type: {d.data_type.value})"
             for d in vocabulary.dimensions.values()
+            if not all_allowed_dim_ids or d.id in all_allowed_dim_ids
         ]
 
         from dataclasses import asdict

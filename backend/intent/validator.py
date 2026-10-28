@@ -433,8 +433,26 @@ class IntentValidator:
                 )
                 return IntentValidationResult(status="CLARIFY", clarification_request=clar_req)
 
-        # 7. Validate Dimensions
-        for dim_name in intent.dimensions:
+        # 7. Validate Dimensions (with guard against hallucinated metric-name groupings)
+        effective_dims = intent.dimensions
+        if intent.dimensions and family in (AnalysisFamily.TOTAL, AnalysisFamily.AVERAGE):
+            has_grouping_intent = bool(re.search(
+                r"\b(by|per|each|across|every|breakdown|split|distribution|group)\b",
+                q_clean,
+                re.IGNORECASE,
+            ))
+            if not has_grouping_intent:
+                cleaned_dims = []
+                for dim_name in intent.dimensions:
+                    dim_def = vocabulary.get_dimension(dim_name)
+                    if dim_def and dim_def.column.lower() in ("amount", "price", "revenue", "sales", "cost", "total", "qty", "quantity"):
+                        continue
+                    cleaned_dims.append(dim_name)
+                effective_dims = tuple(cleaned_dims)
+                import dataclasses
+                intent = dataclasses.replace(intent, dimensions=effective_dims)
+
+        for dim_name in effective_dims:
             dim_def = vocabulary.get_dimension(dim_name)
             if not dim_def:
                 if catalog and dim_name in catalog.dimensions:

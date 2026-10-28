@@ -2,13 +2,16 @@
 from __future__ import annotations
 import re
 import uuid
+import json
+import os
+import sqlite3
 from pathlib import Path
 from typing import Any, Optional
 from fastapi import BackgroundTasks, APIRouter, Depends, Header, HTTPException, Request, Response, status, UploadFile, File, Form
 from pydantic import BaseModel, Field
 
 from backend.api.auth import get_current_actor
-from backend.catalog.extractor import introspect_sqlite_database
+from backend.catalog.extractor import introspect_sqlite_database, ensure_tenant_columns
 from backend.domain.models import ApiActor, Turn, TurnStatus
 from backend.export.export import SecureExportService
 from backend.jobs.worker import DurableJobWorker
@@ -415,7 +418,50 @@ async def upload_source_database(
 
     saved_path = uploads_dir / f"{source_id}.sqlite"
     content = await file.read()
+    if len(content) < 100 or not content.startswith(b"SQLite format 3\x00"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Corrupted or invalid SQLite database: Missing standard SQLite header format.",
+        )
     saved_path.write_bytes(content)
+
+    # Validate SQLite physical integrity via PRAGMA
+    chk_conn = None
+    try:
+        chk_conn = sqlite3.connect(saved_path.resolve().as_posix())
+        chk_cur = chk_conn.cursor()
+        chk_res = chk_cur.execute("PRAGMA integrity_check").fetchone()
+        chk_conn.close()
+        chk_conn = None
+        if not chk_res or chk_res[0].lower() != "ok":
+            saved_path.unlink(missing_ok=True)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"SQLite integrity check failed: {chk_res[0] if chk_res else 'invalid file'}",
+            )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        if chk_conn:
+            try:
+                chk_conn.close()
+            except Exception:
+                pass
+        saved_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to verify SQLite integrity: {exc}",
+        )
+
+    # Guarantee physical tenant isolation columns
+    try:
+        ensure_tenant_columns(saved_path, default_tenant_id=actor.tenant_id)
+    except Exception as exc:
+        saved_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Failed to initialize tenant isolation on database: {exc}",
+        )
 
     try:
         catalog, manifest = introspect_sqlite_database(
@@ -437,9 +483,27 @@ async def upload_source_database(
     if gateway:
         gateway.register_source(source_id, saved_path)
 
-    # Register tenant permissions
+    # Register tenant permissions in memory
     sec = request.app.state.security_runtime
     sec.register_tenant_source(actor.tenant_id, source_id)
+
+    # Persist tenant permissions to runtime.json if configured
+    runtime_path = os.getenv("TALK2DATA_RUNTIME_CONFIG")
+    if not runtime_path and Path("browser-demo/runtime.json").exists():
+        runtime_path = "browser-demo/runtime.json"
+    if runtime_path and Path(runtime_path).exists():
+        try:
+            rc_file = Path(runtime_path)
+            rc_json = json.loads(rc_file.read_text(encoding="utf-8"))
+            perms = rc_json.setdefault("tenant_source_permissions", {})
+            actor_perms = perms.setdefault(actor.tenant_id, [])
+            if source_id not in actor_perms:
+                actor_perms.append(source_id)
+            if "tenant_default" in perms and source_id not in perms["tenant_default"]:
+                perms["tenant_default"].append(source_id)
+            rc_file.write_text(json.dumps(rc_json, indent=2), encoding="utf-8")
+        except Exception:
+            pass
 
     return {
         "status": "success",
