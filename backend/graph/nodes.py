@@ -382,6 +382,7 @@ def clarification_resume_node(state: GraphState, config: RunnableConfig) -> dict
     new_scenario_model = current_intent.scenario_model
     new_driver = current_intent.adjustable_driver
     
+    new_assumptions = list(current_intent.assumptions)
     if target_type == "period":
         new_curr_p = str(resolved_val)
     elif target_type == "period_comparison":
@@ -399,6 +400,7 @@ def clarification_resume_node(state: GraphState, config: RunnableConfig) -> dict
             new_comp_p = str(resolved_val)
     elif target_type == "metric":
         new_measure = str(resolved_val)
+        new_assumptions.append(f"{IntentValidator.METRIC_CONFIRMED_PREFIX} {resolved_val}")
     elif target_type == "dimension":
         if str(resolved_val) not in new_dims:
             new_dims.append(str(resolved_val))
@@ -419,6 +421,7 @@ def clarification_resume_node(state: GraphState, config: RunnableConfig) -> dict
         scenario_model=new_scenario_model,
         adjustable_driver=new_driver,
         ambiguity_code=None,
+        assumptions=tuple(new_assumptions),
     )
     
     return {

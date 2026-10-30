@@ -1,8 +1,9 @@
 """Semantic resolver mapping validated intent to ResolvedSemanticPlan with fan-out prevention."""
 from __future__ import annotations
 from decimal import Decimal
+from typing import Optional
 import uuid
-from backend.catalog.schema import SemanticCatalog, JoinCardinality, ApprovedJoinEdge
+from backend.catalog.schema import SemanticCatalog, JoinCardinality, ApprovedJoinEdge, DimensionDefinition, DataType
 from backend.catalog.pinning import SemanticSnapshotPin
 from backend.intent.schema import StructuredIntent, AnalysisFamily
 from backend.semantic.plan import ResolvedSemanticPlan
@@ -63,6 +64,58 @@ class SemanticResolver:
         raise SemanticResolutionError(
             f"No approved join path between base table '{start_table}' and table '{target_table}'."
         )
+
+    @staticmethod
+    def _pick_period_dimension(
+        catalog: SemanticCatalog,
+        base_table_name: str,
+        keywords: tuple[str, ...],
+    ) -> Optional[str]:
+        """Pick the best period dimension for a base table.
+
+        1. If catalog.default_period_dimension is set, return it.
+        2. Candidates are dimensions whose id contains one of keywords, or whose data_type is DATE/DATETIME.
+        3. Build an undirected adjacency map from catalog.joins, compute tables reachable from base_table,
+           and keep only reachable candidates (fall back to all candidates if none remain).
+        4. Return min(candidates, key=rank).id with rank = (table != base_table, not is_date, "year" not in id).
+           A date column on the measure's own table wins.
+        """
+        if catalog.default_period_dimension:
+            return catalog.default_period_dimension
+
+        candidates: list[DimensionDefinition] = []
+        for d in catalog.dimensions.values():
+            id_lower = d.id.lower()
+            is_date = getattr(d, "data_type", None) in (DataType.DATE, DataType.DATETIME)
+            if any(k in id_lower for k in keywords) or is_date:
+                candidates.append(d)
+
+        if not candidates:
+            return None
+
+        adj: dict[str, set[str]] = {}
+        for edge in catalog.joins:
+            adj.setdefault(edge.from_table, set()).add(edge.to_table)
+            adj.setdefault(edge.to_table, set()).add(edge.from_table)
+
+        visited: set[str] = {base_table_name}
+        queue: list[str] = [base_table_name]
+        while queue:
+            curr = queue.pop(0)
+            for neighbor in adj.get(curr, set()):
+                if neighbor not in visited:
+                    visited.add(neighbor)
+                    queue.append(neighbor)
+
+        reachable_candidates = [d for d in candidates if d.table in visited]
+        pool = reachable_candidates if reachable_candidates else candidates
+
+        def rank(d: DimensionDefinition) -> tuple[bool, bool, bool]:
+            is_date = getattr(d, "data_type", None) in (DataType.DATE, DataType.DATETIME)
+            return (d.table != base_table_name, not is_date, "year" not in d.id.lower())
+
+        best = min(pool, key=rank)
+        return best.id
 
     def resolve(
         self,
@@ -147,10 +200,7 @@ class SemanticResolver:
         period_table = base_table.table_name
         period_column = "period"
         if intent.current_period or intent.comparison_period:
-            p_dim_name = catalog.default_period_dimension or next(
-                (d.id for d in catalog.dimensions.values() if "year" in d.id.lower()),
-                next((d.id for d in catalog.dimensions.values() if any(k in d.id.lower() for k in ("period", "date"))), "period"),
-            )
+            p_dim_name = self._pick_period_dimension(catalog, base_table.table_name, ("year", "period", "date")) or "period"
             p_dim = catalog.dimensions.get(p_dim_name)
             if p_dim:
                 period_table = p_dim.table
@@ -167,10 +217,7 @@ class SemanticResolver:
 
         # For FORECAST and ANOMALY: ensure period dimension is present to pull time series aggregates
         if intent.family in (AnalysisFamily.FORECAST, AnalysisFamily.ANOMALY, AnalysisFamily.TREND) and not resolved_dims:
-            p_dim_name = catalog.default_period_dimension or next(
-                (d.id for d in catalog.dimensions.values() if "period" in d.id.lower() or "year" in d.id.lower() or "date" in d.id.lower()),
-                None,
-            )
+            p_dim_name = self._pick_period_dimension(catalog, base_table.table_name, ("period", "year", "date"))
             if p_dim_name and p_dim_name in catalog.dimensions:
                 p_dim = catalog.dimensions[p_dim_name]
                 resolved_dims.append(p_dim)

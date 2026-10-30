@@ -409,7 +409,9 @@ async def upload_source_database(
             detail="Only SQLite database files (.sqlite, .db, .sqlite3) are currently supported.",
         )
 
-    uploads_dir = Path("browser-demo/uploads")
+    # Ensure upload directory matches backend.runtime.load_runtime relative to runtime config
+    runtime_config = os.getenv("TALK2DATA_RUNTIME_CONFIG")
+    uploads_dir = Path(runtime_config).resolve().parent / "uploads" if runtime_config else Path("browser-demo/uploads")
     uploads_dir.mkdir(parents=True, exist_ok=True)
 
     clean_base = re.sub(r"[^a-zA-Z0-9_]", "_", Path(filename).stem)

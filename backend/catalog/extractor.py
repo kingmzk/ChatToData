@@ -33,7 +33,8 @@ def _infer_data_type(sql_type: str, col_name: str) -> DataType:
     clean_type = (sql_type or "").upper().split("(")[0].strip()
     col_lower = col_name.lower()
 
-    if clean_type in DATE_TYPES or any(k in col_lower for k in ("date", "time", "created_at", "updated_at", "timestamp")):
+    if clean_type in DATE_TYPES or any(k in col_lower for k in ("date", "time", "created_at", "updated_at", "timestamp")) \
+            or (col_lower.endswith(("_at", "_on")) and clean_type not in ("INTEGER", "INT", "REAL", "FLOAT", "NUMERIC", "DECIMAL")):
         return DataType.DATETIME if "time" in clean_type or "time" in col_lower else DataType.DATE
     if clean_type in ("INTEGER", "INT", "BIGINT", "SMALLINT", "TINYINT"):
         return DataType.INTEGER
@@ -64,6 +65,40 @@ NON_MEASURE_KEYWORDS = {
     "priority", "level", "seq", "sequence", "index", "idx", "flag",
     "indicator", "version", "num", "number", "id"
 }
+
+_NON_ADDITIVE_LAST_WORDS = {
+    "month", "day", "quarter", "week", "flag", "code", "number", "status", "revision",
+    "level", "sequence", "rank", "version", "bin", "shelf",
+}
+_PERIOD_QUALIFIERS = {"last", "this", "prior", "next", "previous", "prev", "current"}
+
+
+def _is_calendar_or_code_name(col_name: str) -> bool:
+    """CamelCase/snake names whose final word marks a calendar part, flag or code (ExpMonth, OnlineOrderFlag).
+
+    A trailing 'Year' is a calendar part (ExpYear) unless qualified like SalesLastYear, which is monetary.
+    """
+    words = [w.lower() for w in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", col_name.replace("_", " "))]
+    if not words:
+        return False
+    last = words[-1]
+    if last in _NON_ADDITIVE_LAST_WORDS:
+        return True
+    return last == "year" and (len(words) == 1 or words[-2] not in _PERIOD_QUALIFIERS)
+
+
+def _is_small_range_integer(cur: sqlite3.Cursor, tbl: str, col: str, row_count: int) -> bool:
+    """Integer columns confined to 0..12 across many rows behave like months, statuses or codes, not amounts."""
+    if row_count < 100:
+        return False
+    try:
+        lo, hi, distinct, non_integer = cur.execute(
+            f'SELECT MIN("{col}"), MAX("{col}"), COUNT(DISTINCT "{col}"), '
+            f'SUM(CASE WHEN typeof("{col}") NOT IN (\'integer\', \'null\') THEN 1 ELSE 0 END) FROM "{tbl}"'
+        ).fetchone()
+    except Exception:
+        return False
+    return non_integer == 0 and lo is not None and 0 <= lo and hi <= 12 and distinct <= 13
 
 
 def _matches_table(entity: str, table_name: str) -> bool:
@@ -151,6 +186,7 @@ def introspect_sqlite_database(
     tables_meta: dict[str, dict[str, Any]] = {}
     table_defs: dict[str, TableDefinition] = {}
     all_table_columns: dict[str, dict[str, str]] = {}
+    proven_unique_by_table: dict[str, set[str]] = {}
 
     for tbl in raw_tables:
         # Columns: (cid, name, type, notnull, dflt_value, pk)
@@ -173,6 +209,27 @@ def introspect_sqlite_database(
             row_count = 0
 
         primary_key = tuple(pks) if pks else ("id",) if "id" in col_type_map else (list(col_type_map.keys())[0],)
+
+        # Keys proven unique. Databases without declared constraints (common in exported files) are
+        # inspected by data so 1:1 / many-to-one detection does not rest on the first-column guess.
+        proven_keys: list[str] = [pks[0]] if len(pks) == 1 else []
+        if not pks and 0 < row_count <= 500_000:
+            for col in col_type_map:
+                lowered = col.lower()
+                id_like = lowered == "id" or lowered.endswith("_id") or re.search(r"[a-z0-9]ID$", col) is not None
+                if not id_like or lowered == "tenant_id":
+                    continue
+                try:
+                    total, non_null, distinct = cur.execute(
+                        f'SELECT COUNT(*), COUNT("{col}"), COUNT(DISTINCT "{col}") FROM "{tbl}"'
+                    ).fetchone()
+                except Exception:
+                    continue
+                if total == non_null == distinct:
+                    proven_keys.append(col)
+            if proven_keys:
+                primary_key = (proven_keys[0],)
+        proven_unique_by_table[tbl] = set(proven_keys)
 
         tables_meta[tbl] = {
             "name": tbl,
@@ -197,6 +254,7 @@ def introspect_sqlite_database(
             primary_key=primary_key,
             tenant_column=tenant_col or "tenant_id",
             grain=f"{tbl}_grain",
+            columns={c[1]: _infer_data_type(c[2], c[1]) for c in cols_info},
         )
 
     # Extract unique column constraints per table
@@ -300,6 +358,53 @@ def introspect_sqlite_database(
                             "detection_method": "INFERRED_PARENT_ENTITY_KEY",
                         })
 
+    # CamelCase keys (SalesOrderID, TerritoryID): link a column to the table whose single-column primary
+    # key has exactly that name. A key name owned by several tables (e.g. BusinessEntityID) is linked only
+    # when exactly one owner's own name matches the column stem; otherwise it is skipped as ambiguous.
+    pk_owners: dict[str, list[str]] = {}
+    for t in raw_tables:
+        for key_col in sorted(proven_unique_by_table.get(t, set()) | unique_cols_by_table.get(t, set())):
+            pk_owners.setdefault(key_col, []).append(t)
+
+    for tbl in raw_tables:
+        tbl_uniques = unique_cols_by_table.get(tbl, set()) | proven_unique_by_table.get(tbl, set())
+        for col_name in all_table_columns[tbl]:
+            if re.search(r"[a-z0-9]ID$", col_name) is None:
+                continue
+            owners = [t for t in pk_owners.get(col_name, []) if t != tbl]
+            if not owners:
+                continue
+            stem = col_name[:-2].lower()
+            entity_of = lambda t: t.split("_", 1)[-1].lower()
+            clean_entity = lambda t: re.sub(r"(header|detail|details|history|table)$", "", entity_of(t))
+            exact = [t for t in owners if entity_of(t) == stem or clean_entity(t) == stem]
+            related = [t for t in owners if stem in entity_of(t)]
+            if len(exact) == 1:
+                target_table = exact[0]
+            elif len(related) == 1:
+                target_table = related[0]
+            else:
+                continue
+            edge_key = (tbl, target_table, col_name, col_name)
+            if edge_key in seen_join_pairs:
+                continue
+            seen_join_pairs.add(edge_key)
+            is_one_to_one = col_name in tbl_uniques
+            cardinality = JoinCardinality.ONE_TO_ONE if is_one_to_one else JoinCardinality.MANY_TO_ONE
+            approved_joins.append(
+                ApprovedJoinEdge(
+                    from_table=tbl, to_table=target_table,
+                    from_column=col_name, to_column=col_name,
+                    cardinality=cardinality, join_type=JoinType.INNER,
+                )
+            )
+            join_manifest.append({
+                "from_table": tbl, "to_table": target_table,
+                "from_column": col_name, "to_column": col_name,
+                "cardinality": cardinality.value, "join_type": "INNER",
+                "detection_method": "INFERRED_CAMELCASE_PRIMARY_KEY",
+            })
+
     # Detect Many-to-Many Junction / Bridge tables
     m2m_manifest: list[dict[str, Any]] = []
     table_fk_targets: dict[str, list[tuple[str, str, str]]] = {}
@@ -370,8 +475,6 @@ def introspect_sqlite_database(
         rel["confidence_label"] = "Verified DDL Foreign Key" if rel["detection_method"] == "EXPLICIT_FOREIGN_KEY" else "Inferred Entity Key"
         rel["explanation"] = explanation
 
-    conn.close()
-
     # 3. Extract Dimensions
     dimensions: dict[str, DimensionDefinition] = {}
     dim_manifest: list[dict[str, Any]] = []
@@ -431,14 +534,22 @@ def introspect_sqlite_database(
             is_non_measure = (
                 col_lower in NON_MEASURE_KEYWORDS
                 or any(col_lower.endswith(s) for s in ("_code", "_num", "_number", "_idx", "_seq", "_flag", "_status", "_year", "_month", "_day"))
+                or _is_calendar_or_code_name(col_name)
             )
-            is_id_column = col_lower.endswith("_id") or col_lower in ("id", "tenant_id")
+            # Also catches CamelCase keys such as SalesOrderID / BusinessEntityID.
+            is_id_column = (
+                col_lower.endswith("_id") or col_lower in ("id", "tenant_id")
+                or re.search(r"[a-z0-9]ID$", col_name) is not None
+            )
             is_numeric = (
                 clean_type in NUMERIC_TYPES
                 or any(k in col_lower for k in ("amount", "price", "revenue", "sales", "cost", "total", "rate", "qty", "quantity"))
             )
 
-            if is_numeric and not is_id_column and not is_non_measure:
+            if (
+                is_numeric and not is_id_column and not is_non_measure
+                and not _is_small_range_integer(cur, tbl, col_name, tables_meta[tbl]["row_count"])
+            ):
                 meas_id = f"{tbl}_{col_name}"
                 unit = _infer_unit(col_name)
                 meas_def = MeasureDefinition(
@@ -462,9 +573,33 @@ def introspect_sqlite_database(
                     "aggregation": "SUM",
                 })
 
+                # Governed averages require an approved AVG metric, so publish one beside each SUM metric.
+                avg_id = f"{meas_id}_avg"
+                avg_def = MeasureDefinition(
+                    id=avg_id,
+                    name=f"Average {meas_def.name}",
+                    description=f"Average {col_name.replace('_', ' ')} per row on {tbl}",
+                    table=tbl,
+                    column=col_name,
+                    aggregation=AggregationType.AVG,
+                    base_grain=f"{tbl}_grain",
+                    unit=unit,
+                    allowed_dimensions=allowed_dim_ids,
+                )
+                measures[avg_id] = avg_def
+                measure_manifest.append({
+                    "id": avg_id,
+                    "name": avg_def.name,
+                    "table": tbl,
+                    "column": col_name,
+                    "unit": unit,
+                    "aggregation": "AVG",
+                })
+
                 # Check for business revenue alias if on a transaction/sales/order table
                 if (
                     any(k in tbl.lower() for k in ("order", "sale", "invoice", "trans", "payment"))
+                    and not any(k in tbl.lower() for k in ("purchas", "vendor", "supplier"))
                     and any(k in col_lower for k in ("amount", "total", "sales", "revenue"))
                     and "revenue" not in measures
                 ):
@@ -545,6 +680,8 @@ def introspect_sqlite_database(
             "unit": "Records",
             "aggregation": "COUNT",
         })
+
+    conn.close()
 
     # Construct complete SemanticCatalog
     catalog = SemanticCatalog(

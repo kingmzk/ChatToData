@@ -337,7 +337,12 @@ class GovernedQueryCompiler:
             p_period = f"p_period_{param_idx}"
             parameters[p_period] = plan.current_period
             param_idx += 1
-            where_clauses.append(f"{target_period_table}.{target_period_col} = :{p_period}")
+            period_tbl_def = next((t for t in plan.required_tables if t.table_name == target_period_table), None)
+            period_col_type = period_tbl_def.columns.get(target_period_col) if period_tbl_def and period_tbl_def.columns else None
+            if getattr(period_col_type, "value", period_col_type) in ("DATE", "DATETIME"):
+                where_clauses.append(f"substr({target_period_table}.{target_period_col}, 1, {len(str(plan.current_period))}) = :{p_period}")
+            else:
+                where_clauses.append(f"{target_period_table}.{target_period_col} = :{p_period}")
 
         # Construct SelectQuery AST
         ast_select_items = [RawExpr(p) for p in select_parts]

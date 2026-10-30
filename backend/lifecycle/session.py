@@ -896,8 +896,10 @@ class ConversationLifecycleManager:
         scenario_model = intent.scenario_model
         adjustable_driver = intent.adjustable_driver
 
+        assumptions = list(intent.assumptions)
         if target_type == "metric":
             measure = str(resolved_val)
+            assumptions.append(f"{IntentValidator.METRIC_CONFIRMED_PREFIX} {resolved_val}")
         elif target_type == "dimension":
             if resolved_val not in dims:
                 dims.append(str(resolved_val))
@@ -922,7 +924,7 @@ class ConversationLifecycleManager:
             current_period=curr_p,
             comparison_period=comp_p,
             ambiguity_code=None,
-            assumptions=intent.assumptions,
+            assumptions=tuple(assumptions),
             horizon=horizon,
             scenario_model=scenario_model,
             adjustments=dict(intent.adjustments),

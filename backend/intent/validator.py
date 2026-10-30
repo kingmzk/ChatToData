@@ -1,7 +1,7 @@
 """Deterministic intent validation gate distinguishing clarification, decline, and execution."""
 from __future__ import annotations
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Optional
 from backend.catalog.pinning import AccessibleVocabulary
@@ -28,6 +28,41 @@ class IntentValidator:
     - Never invent missing periods, dimensions, or business definitions.
     - Clarification and decline NEVER continue directly into semantic resolution.
     """
+
+    GENERIC_TABLE_WORDS = frozenset({"header", "detail", "details", "history", "archive", "item", "items", "table"})
+    METRIC_CONFIRMED_PREFIX = "Metric confirmed by user:"
+
+    @staticmethod
+    def _stem(word: str) -> str:
+        for suffix in ("ing", "es", "s", "e"):
+            if word.endswith(suffix) and len(word) - len(suffix) >= 3:
+                return word[: -len(suffix)]
+        return word
+
+    @classmethod
+    def _table_words(cls, table_name: str) -> set[str]:
+        words: set[str] = set()
+        for part in table_name.split("_"):
+            words.update(w.lower() for w in re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])|\d+", part))
+        return {cls._stem(w) for w in words - cls.GENERIC_TABLE_WORDS}
+
+    def _permitted_dimension_alias(
+        self, dim_name: str, measure_def: Any, vocabulary: AccessibleVocabulary, question_words: set[str],
+    ) -> str:
+        dim_def = vocabulary.get_dimension(dim_name)
+        if not dim_def or dim_def.id in measure_def.allowed_dimensions:
+            return dim_name
+        alternatives = [
+            d for d in vocabulary.dimensions.values()
+            if d.id != dim_def.id and d.column.lower() == dim_def.column.lower()
+            and d.id in measure_def.allowed_dimensions
+        ]
+        if len(alternatives) == 1:
+            return alternatives[0].id
+        scored = [(len(self._table_words(d.table) & question_words), d) for d in alternatives]
+        best = max((s for s, _ in scored), default=0)
+        winners = [d for s, d in scored if s == best]
+        return winners[0].id if best > 0 and len(winners) == 1 else dim_name
 
     GREETING_PATTERNS = [
         re.compile(r"^\s*(hello|hi|hey|greetings|good\s+(?:morning|afternoon|evening))\b.*", re.IGNORECASE),
@@ -123,6 +158,60 @@ class IntentValidator:
                     status="DECLINE",
                     decline_reason=f"Dataset/table '{tbl_def.table_name}' requires unsupported disclosure protections and remains disabled.",
                 )
+
+        # 3b. Same column/aggregation exposed by several tables (e.g. Sales vs Purchasing TotalDue):
+        # never guess silently. Use the table the question names, otherwise ask.
+        already_confirmed = any(a.startswith(self.METRIC_CONFIRMED_PREFIX) for a in intent.assumptions)
+        if not already_confirmed:
+            peers = [
+                m for m in vocabulary.measures.values()
+                if m.id != measure_def.id and m.table != measure_def.table
+                and m.column.lower() == measure_def.column.lower()
+                and m.aggregation == measure_def.aggregation
+            ]
+            if peers:
+                by_table: dict[str, Any] = {measure_def.table: measure_def}
+                for m in peers:
+                    current = by_table.get(m.table)
+                    # One candidate per table; the physical-column measure wins over aliases such as 'revenue'.
+                    if current is None or (current is not measure_def and m.id.startswith(f"{m.table}_")):
+                        by_table[m.table] = m
+                candidates = list(by_table.values())
+                q_words = {self._stem(w) for w in re.findall(r"[a-z]+", q_clean.lower())}
+
+                def _score(m: Any) -> tuple[int, float]:
+                    words = self._table_words(m.table)
+                    hits = len(words & q_words)
+                    return (hits, hits / len(words) if words else 0.0)
+
+                scores = {m.id: _score(m) for m in candidates}
+                top = max(scores.values())
+                winners = [m for m in candidates if scores[m.id] == top]
+                if top[0] > 0 and len(winners) == 1:
+                    if winners[0].id != measure_def.id:
+                        intent = replace(intent, measure=winners[0].id)
+                        measure_def = winners[0]
+                else:
+                    ranked = sorted(candidates, key=lambda m: (-scores[m.id][0], -scores[m.id][1], m.table))[:4]
+                    options = [
+                        ClarificationOption(
+                            choice_id=f"opt_metric_{i + 1}",
+                            label=f"{m.name} (table {m.table})",
+                            target_type="metric",
+                            resolved_value=m.id,
+                        )
+                        for i, m in enumerate(ranked)
+                    ]
+                    clar_req = ClarificationRequest(
+                        clarification_id=f"clar_{turn_id}_metric_table",
+                        turn_id=turn_id, tenant_id=tenant_id, subject_id=subject_id,
+                        source_id=vocabulary.source_id,
+                        semantic_release_id=vocabulary.release_id,
+                        ambiguity_code="metric-disambiguation",
+                        question_prompt=f"'{measure_def.column}' exists in more than one table. Which one do you mean?",
+                        options=options,
+                    )
+                    return IntentValidationResult(status="CLARIFY", clarification_request=clar_req)
 
         # 4. Check Family
         family = intent.family or AnalysisFamily.TOTAL
@@ -434,6 +523,24 @@ class IntentValidator:
                 return IntentValidationResult(status="CLARIFY", clarification_request=clar_req)
 
         # 7. Validate Dimensions (with guard against hallucinated metric-name groupings)
+        # A measure column used as a dimension (TotalDue grouped by TotalDue) is never a meaningful breakdown.
+        measure_columns = {(m.table, m.column.lower()) for m in vocabulary.measures.values()}
+        own_column = (measure_def.table, measure_def.column.lower())
+
+        def _is_own_column(name: str) -> bool:
+            d = vocabulary.get_dimension(name)
+            if d:
+                return (d.table, d.column.lower()) == own_column
+            clean_name = name.lower()
+            return (
+                clean_name == own_column[1]
+                or clean_name.endswith(f"_{own_column[1]}")
+                or clean_name == f"{own_column[0].lower()}_{own_column[1]}"
+            )
+
+        if any(_is_own_column(n) for n in intent.dimensions):
+            intent = replace(intent, dimensions=tuple(n for n in intent.dimensions if not _is_own_column(n)))
+
         effective_dims = intent.dimensions
         if intent.dimensions and family in (AnalysisFamily.TOTAL, AnalysisFamily.AVERAGE):
             has_grouping_intent = bool(re.search(
@@ -445,12 +552,22 @@ class IntentValidator:
                 cleaned_dims = []
                 for dim_name in intent.dimensions:
                     dim_def = vocabulary.get_dimension(dim_name)
-                    if dim_def and dim_def.column.lower() in ("amount", "price", "revenue", "sales", "cost", "total", "qty", "quantity"):
+                    if dim_def and (
+                        dim_def.column.lower() in ("amount", "price", "revenue", "sales", "cost", "total", "qty", "quantity")
+                        or (dim_def.table, dim_def.column.lower()) in measure_columns
+                    ):
                         continue
                     cleaned_dims.append(dim_name)
                 effective_dims = tuple(cleaned_dims)
-                import dataclasses
-                intent = dataclasses.replace(intent, dimensions=effective_dims)
+                intent = replace(intent, dimensions=effective_dims)
+
+        question_words = {self._stem(w) for w in re.findall(r"[a-z]+", q_clean.lower())}
+        remapped = tuple(
+            self._permitted_dimension_alias(d, measure_def, vocabulary, question_words) for d in effective_dims
+        )
+        if remapped != tuple(effective_dims):
+            effective_dims = remapped
+            intent = replace(intent, dimensions=effective_dims)
 
         for dim_name in effective_dims:
             dim_def = vocabulary.get_dimension(dim_name)
